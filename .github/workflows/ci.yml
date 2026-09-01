@@ -43,7 +43,7 @@ jobs:
       - name: Build release images
         run: docker compose build api web
       - name: Scan web runtime
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: noemosyne-web:latest
           severity: HIGH,CRITICAL

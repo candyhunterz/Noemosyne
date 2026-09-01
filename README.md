@@ -36,7 +36,7 @@ Milestone 1 is a **curated AI-research claim ledger**, not an autonomous world m
 
 The MVP succeeds only if the structured context improves citation correctness, contradiction handling, temporal fidelity, or calibrated abstention on a fixed evaluation set.
 
-## Repository shape proposed for implementation
+## Repository shape
 
 ```text
 apps/
@@ -54,22 +54,54 @@ examples/
   ai-research/  redistributable seed dataset
 ```
 
-## Read this package
+## Read the design
 
 Start with:
 
-- [`00_EXECUTIVE_OVERVIEW.md`](00_EXECUTIVE_OVERVIEW.md)
 - [`03_EPISTEMIC_MODEL.md`](03_EPISTEMIC_MODEL.md)
-- [`10_MVP_SPECIFICATION.md`](10_MVP_SPECIFICATION.md)
 - [`14_CODEX_IMPLEMENTATION_BRIEF.md`](14_CODEX_IMPLEMENTATION_BRIEF.md)
+- [`docs/IMPLEMENTATION_NOTES.md`](docs/IMPLEMENTATION_NOTES.md)
+- [`docs/adr/`](docs/adr/)
 
-The numbered documents are normative in ascending specificity. If they conflict, the epistemic invariants in `03`, the MVP boundaries in `10`, and the implementation acceptance criteria in `14` take precedence.
+The supplied numbered documents are normative in ascending specificity. The epistemic invariants in `03` and implementation acceptance criteria in `14` take precedence.
 
 ## Status
 
-This package is the product-definition and architecture baseline. Application code intentionally has not started.
+Milestone 1 is implemented as a PostgreSQL-backed FastAPI service, deterministic seed importer, typed proposal/review workflow, historical retrieval layer, and minimal Next.js review/read interface.
 
-## License recommendation
+## Quick start
 
-Use Apache-2.0 for software and CC BY 4.0 for original documentation and curated example annotations. Third-party metadata, text, and excerpts retain their own licenses; Noemosyne stores license and access metadata per source and must not redistribute content merely because it can retrieve it.
+Prerequisites are Docker Desktop, or Python 3.13 with `uv` plus Node.js with `pnpm`.
 
+```sh
+make start
+```
+
+The web UI starts at <http://localhost:3000> and development API docs at <http://localhost:8000/v1/docs>. In another terminal, import the illustrative seed:
+
+```sh
+docker compose exec api noemosyne-seed import examples/ai-research/seed.yaml
+```
+
+For local development without containers:
+
+```sh
+make bootstrap
+docker compose up -d db
+make migrate
+make seed
+uv run uvicorn noemosyne_api.main:app --reload
+pnpm dev
+```
+
+Run the complete backend, contract, TypeScript, and web build checks with `make check`. Operational backup/restore and deployment boundaries are in [`docs/operations.md`](docs/operations.md).
+
+## Architecture and security
+
+PostgreSQL is the only canonical store. Accepted epistemic state enters through immutable proposals, independent item reviews, and atomic application. Claim context is filtered by both recorded and valid time; summaries retain the IDs needed to recover policy, evidence, source locators, and review provenance. The web app uses the generated OpenAPI boundary and does not redefine verdict or relation rules.
+
+M1 has no authentication or tenant authorization, so it must run behind operator-controlled access and TLS outside local development. It performs no production model-provider calls and stores no copyrighted seed excerpts. See [`SECURITY.md`](SECURITY.md) before deployment.
+
+## License
+
+Software is Apache-2.0. Original documentation and curated example annotations are CC BY 4.0. Third-party metadata, text, and excerpts retain their own licenses; Noemosyne stores license and access metadata per source and does not redistribute content merely because it can retrieve it.

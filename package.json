@@ -1,0 +1,14 @@
+{
+  "name": "noemosyne-workspace",
+  "private": true,
+  "packageManager": "pnpm@11.24.0",
+  "scripts": {
+    "dev": "pnpm --filter @noemosyne/web dev",
+    "build": "pnpm --filter @noemosyne/web build",
+    "typecheck": "pnpm --filter @noemosyne/web typecheck",
+    "generate:api": "uv run python scripts/generate_openapi.py && pnpm exec openapi-typescript openapi.json -o apps/web/lib/generated-api/schema.d.ts"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.10.1"
+  }
+}

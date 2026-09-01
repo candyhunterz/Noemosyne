@@ -1,0 +1,150 @@
+schema_version: 1
+package_id: noemosyne.ai-research.illustrative
+package_version: 1.0.0
+namespace:
+  symbol: ai-research
+  name: AI Research
+actors:
+  - symbol: curator
+    kind: human
+    display_name: Illustrative seed curator
+  - symbol: reviewer
+    kind: human
+    display_name: Illustrative seed reviewer
+policy:
+  symbol: m1-ordinal
+  name: M1 ordinal evidence synthesis
+  version: 1.0.0
+sources:
+  - symbol: snell-2024
+    kind: paper
+    title: Scaling LLM Test-Time Compute Optimally can be More Effective than Scaling Model Parameters
+    canonical_uri: https://arxiv.org/abs/2408.03314
+    license_basis: bibliographic-metadata-and-locator-only
+    access:
+      public: true
+    fragments:
+      - symbol: snell-efficiency
+        locator:
+          section: Abstract and results
+          note: Efficiency comparison and FLOPs-matched result
+        license_basis: locator-only
+  - symbol: lost-middle-2023
+    kind: paper
+    title: Lost in the Middle — How Language Models Use Long Contexts
+    canonical_uri: https://arxiv.org/abs/2307.03172
+    license_basis: bibliographic-metadata-and-locator-only
+    access:
+      public: true
+    fragments:
+      - symbol: position-sensitivity
+        locator:
+          section: Results
+          note: Performance varies with relevant-information position
+        license_basis: locator-only
+  - symbol: longmemeval-2024
+    kind: paper
+    title: LongMemEval — Benchmarking Chat Assistants on Long-Term Interactive Memory
+    canonical_uri: https://arxiv.org/abs/2410.10813
+    license_basis: bibliographic-metadata-and-locator-only
+    access:
+      public: true
+    fragments:
+      - symbol: memory-capabilities
+        locator:
+          section: Task taxonomy
+          note: Update, temporal, multi-session, and abstention capabilities
+        license_basis: locator-only
+claims:
+  - symbol: inference-time
+    wording: On the mathematical reasoning tasks evaluated by Snell et al. (2024), adaptively allocated inference-time compute improved efficiency relative to best-of-N sampling.
+    scope:
+      task_distribution: evaluated mathematical reasoning tasks
+      comparator: best-of-N sampling
+      source_study: Snell et al. 2024
+    valid_from: 2024-08-06T00:00:00Z
+  - symbol: external-memory
+    wording: Larger context windows do not by themselves eliminate the value of external structured memory for longitudinal assistant tasks.
+    scope:
+      task_distribution: longitudinal assistant tasks requiring updates, temporal reasoning, or abstention
+      interpretation_limit: does not establish that Noemosyne specifically is beneficial
+    valid_from: 2024-10-14T00:00:00Z
+  - symbol: memory-capacity
+    wording: Increasing raw context capacity alone guarantees reliable use of all relevant information regardless of its position.
+    scope:
+      system_class: long-context language models
+    valid_from: 2023-07-06T00:00:00Z
+evidence:
+  - symbol: snell-item
+    fragment: snell-efficiency
+    claim: inference-time
+    stance: supports
+    directness: direct
+    strength_band: strong
+    scope_match: Directly matches the evaluated tasks and comparator; broader generalization is excluded.
+    dependency_group: snell-study
+  - symbol: middle-item
+    fragment: position-sensitivity
+    claim: external-memory
+    stance: supports
+    directness: indirect
+    strength_band: material
+    scope_match: Shows a limitation of capacity-only retrieval, not direct product efficacy.
+    dependency_group: long-context-benchmarks
+  - symbol: longmem-item
+    fragment: memory-capabilities
+    claim: external-memory
+    stance: supports
+    directness: indirect
+    strength_band: material
+    scope_match: Matches longitudinal memory capabilities while remaining agnostic to implementation.
+    dependency_group: long-context-benchmarks
+dependency_groups:
+  - symbol: snell-study
+    label: Snell et al. evaluation pipeline
+    dependency_type: source-study
+  - symbol: long-context-benchmarks
+    label: Long-context and longitudinal memory benchmarks
+    dependency_type: benchmark-family
+assessments:
+  - symbol: inference-assessment
+    claim: inference-time
+    verdict: provisionally_supported
+    directness: high
+    methodological_quality: medium
+    independence: low
+    consistency: medium
+    scope_fit: high
+    stability: evolving
+    rationale: The reported comparison directly supports the narrow claim; independent replication and broader task generalization remain open.
+    uncertainty_drivers:
+      - prompt difficulty
+      - base-model non-trivial success
+    inputs: [snell-item]
+    valid_from: 2024-08-06T00:00:00Z
+  - symbol: external-memory-assessment
+    claim: external-memory
+    verdict: provisionally_supported
+    directness: medium
+    methodological_quality: medium
+    independence: medium
+    consistency: medium
+    scope_fit: medium
+    stability: evolving
+    rationale: The evidence supports memory mechanisms in general, but does not directly validate Noemosyne's ontology.
+    uncertainty_drivers:
+      - indirect product relevance
+      - benchmark representativeness
+    inputs: [middle-item, longmem-item]
+    valid_from: 2024-10-14T00:00:00Z
+relations:
+  - source: memory-capacity
+    target: external-memory
+    type: incompatible_with
+    context:
+      overlap: longitudinal tasks where relevant information position affects use
+questions:
+  - symbol: external-memory-value
+    wording: Which external memory structures most improve citation correctness, contradiction handling, temporal fidelity, and calibrated abstention?
+    importance_rationale: This is the discriminating product hypothesis for Milestone 1 evaluation.
+    candidate_claims: [external-memory]

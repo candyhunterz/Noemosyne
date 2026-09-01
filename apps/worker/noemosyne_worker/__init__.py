@@ -1,0 +1,1 @@
+"""Noemosyne background job worker."""

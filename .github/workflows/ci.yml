@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: make bootstrap
+      - run: make check
+      - run: pnpm generate:api
+      - name: Generated contract is committed
+        run: git diff --exit-code -- openapi.json apps/web/lib/generated-api/schema.d.ts
+      - name: Dependency vulnerability checks
+        run: |
+          uvx pip-audit
+          pnpm audit --audit-level high
+
+  images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release images
+        run: docker compose build api web
+      - name: Scan web runtime
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: noemosyne-web:latest
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"

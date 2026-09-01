@@ -1,0 +1,43 @@
+services:
+  db:
+    image: pgvector/pgvector:pg18@sha256:2ba9ca5f2e7daa0f0e7723cba1ee9167bab54efd3640516a44ac1a928dd67e7a
+    environment:
+      POSTGRES_DB: noemosyne
+      POSTGRES_USER: noemosyne
+      POSTGRES_PASSWORD: noemosyne
+    ports:
+      - "5432:5432"
+    volumes:
+      - noemosyne-postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U noemosyne -d noemosyne"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://noemosyne:noemosyne@db:5432/noemosyne
+      NOEMOSYNE_ENV: development
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/web.Dockerfile
+    environment:
+      NOEMOSYNE_API_URL: http://api:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  noemosyne-postgres:

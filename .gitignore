@@ -19,7 +19,8 @@ node_modules/
 coverage/
 playwright-report/
 test-results/
+*.tsbuildinfo
 *.log
 .idea/
 .vscode/
-
+.tracebase/

@@ -1,0 +1,70 @@
+[project]
+name = "noemosyne"
+version = "0.1.0"
+description = "Persistent epistemic memory with inspectable provenance"
+readme = "README.md"
+requires-python = ">=3.13"
+license = "Apache-2.0"
+dependencies = [
+  "alembic>=1.16,<2",
+  "fastapi>=0.116,<1",
+  "opentelemetry-api>=1.36,<2",
+  "opentelemetry-sdk>=1.36,<2",
+  "psycopg[binary]>=3.2,<4",
+  "pydantic-settings>=2.10,<3",
+  "pyyaml>=6.0,<7",
+  "sqlalchemy>=2.0.43,<3",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[dependency-groups]
+dev = [
+  "hypothesis>=6.138,<7",
+  "httpx>=0.28,<1",
+  "mypy>=1.17,<2",
+  "pytest>=8.4,<9",
+  "pytest-asyncio>=1.1,<2",
+  "ruff>=0.12,<1",
+  "testcontainers[postgres]>=4.12,<5",
+  "types-pyyaml>=6.0,<7",
+]
+
+[project.scripts]
+noemosyne-seed = "noemosyne_db.seed:main"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = ["postgres: requires a disposable PostgreSQL container"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+mypy_path = ["apps/api", "apps/worker", "packages/domain", "packages/db", "packages/retrieval", "packages/testkit"]
+packages = ["noemosyne_domain", "noemosyne_db", "noemosyne_retrieval", "noemosyne_api"]
+
+[tool.hatch.build.targets.wheel]
+packages = [
+  "apps/api/noemosyne_api",
+  "apps/worker/noemosyne_worker",
+  "packages/domain/noemosyne_domain",
+  "packages/db/noemosyne_db",
+  "packages/retrieval/noemosyne_retrieval",
+  "packages/testkit/noemosyne_testkit",
+]

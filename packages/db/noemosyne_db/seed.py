@@ -156,35 +156,31 @@ def import_seed(session: Session, path: Path) -> dict[str, Any]:
                 )
             )
         session.flush()
-        session.add(
-            Proposal(
-                id=proposal_id,
-                namespace_id=namespace_id,
-                proposer_actor_id=curator_id,
-                title=f"Import {package.package_id} {package.package_version}",
-                description="Deterministic illustrative seed import",
-                base_revision_token=0,
-                status="accepted",
-                submitted_at=datetime.now(UTC),
-                applied_at=datetime.now(UTC),
-                applied_by_actor_id=reviewer_id,
-            )
+        proposal = Proposal(
+            id=proposal_id,
+            namespace_id=namespace_id,
+            proposer_actor_id=curator_id,
+            title=f"Import {package.package_id} {package.package_version}",
+            description="Deterministic illustrative seed import",
+            base_revision_token=0,
+            status="in_review",
+            submitted_at=datetime.now(UTC),
         )
+        session.add(proposal)
         session.flush()
-        session.add(
-            ProposalItem(
-                id=item_id,
-                proposal_id=proposal_id,
-                position=0,
-                command_type="ImportSeedPackage",
-                payload_json={
-                    "package_id": package.package_id,
-                    "version": package.package_version,
-                    "sha256": digest,
-                },
-                status="accepted",
-            )
+        item = ProposalItem(
+            id=item_id,
+            proposal_id=proposal_id,
+            position=0,
+            command_type="ImportSeedPackage",
+            payload_json={
+                "package_id": package.package_id,
+                "version": package.package_version,
+                "sha256": digest,
+            },
+            status="valid",
         )
+        session.add(item)
         session.flush()
         session.add(
             ReviewDecision(
@@ -194,6 +190,13 @@ def import_seed(session: Session, path: Path) -> dict[str, Any]:
                 rationale="Reviewed illustrative locators and scope-qualified annotations",
             )
         )
+        session.flush()
+        item.status = "accepted"
+        session.flush()
+        proposal.status = "accepted"
+        proposal.applied_at = datetime.now(UTC)
+        proposal.applied_by_actor_id = reviewer_id
+        session.flush()
         policy_id = sid("policy", package.policy["symbol"])
         session.add(
             AssessmentPolicy(

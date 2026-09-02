@@ -727,7 +727,7 @@ def add_review(
     decision: str,
     rationale: str,
 ) -> ReviewDecision:
-    proposal = session.get(Proposal, proposal_id)
+    proposal = session.scalar(select(Proposal).where(Proposal.id == proposal_id).with_for_update())
     item = session.get(ProposalItem, item_id)
     if proposal is None or item is None or item.proposal_id != proposal.id:
         raise NotFoundError("proposal.item_not_found", "Proposal item not found")
@@ -851,6 +851,7 @@ def apply_proposal(session: Session, proposal_id: str, applied_by_actor_id: str)
             else:
                 item.status = "rejected"
         if not accepted:
+            session.flush()
             proposal.status = "rejected"
             proposal.applied_at = datetime.now(UTC)
             proposal.applied_by_actor_id = applied_by_actor_id
@@ -868,6 +869,7 @@ def apply_proposal(session: Session, proposal_id: str, applied_by_actor_id: str)
             )
             item.created_canonical_ids_json = created_ids
             item.status = "accepted"
+        session.flush()
         namespace.revision_token += 1
         proposal.status = "accepted" if len(accepted) == len(items) else "partially_accepted"
         proposal.applied_at = datetime.now(UTC)
@@ -888,14 +890,17 @@ def apply_proposal(session: Session, proposal_id: str, applied_by_actor_id: str)
     except ConflictError as error:
         session.rollback()
         if error.code in {"proposal.stale_base_revision", "proposal.precondition_failed"}:
-            stale_proposal = session.get(Proposal, proposal_id)
+            stale_proposal = session.scalar(
+                select(Proposal).where(Proposal.id == proposal_id).with_for_update()
+            )
             if stale_proposal is not None and stale_proposal.status == "in_review":
-                stale_proposal.status = "stale"
                 stale_items = session.scalars(
                     select(ProposalItem).where(ProposalItem.proposal_id == proposal_id)
                 ).all()
                 for stale_item in stale_items:
                     stale_item.status = "stale"
+                session.flush()
+                stale_proposal.status = "stale"
                 session.commit()
         raise
     except Exception:

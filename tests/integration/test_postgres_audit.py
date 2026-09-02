@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -57,6 +58,67 @@ def _identity() -> str:
     return str(uuid4())
 
 
+def _terminal_workflow_fixture(
+    session: Session, status: str = "accepted"
+) -> tuple[Proposal, ProposalItem, Actor]:
+    suffix = _identity()
+    namespace = Namespace(slug=f"terminal-{suffix}", name="Terminal workflow")
+    session.add(namespace)
+    session.flush()
+    proposer = Actor(
+        namespace_id=namespace.id,
+        kind="human",
+        display_name="Terminal proposer",
+        external_id=f"terminal-proposer-{suffix}",
+    )
+    reviewer = Actor(
+        namespace_id=namespace.id,
+        kind="human",
+        display_name="Terminal reviewer",
+        external_id=f"terminal-reviewer-{suffix}",
+    )
+    session.add_all([proposer, reviewer])
+    session.flush()
+    proposal = Proposal(
+        namespace_id=namespace.id,
+        proposer_actor_id=proposer.id,
+        title=f"Terminal {status}",
+        base_revision_token=0,
+        status="in_review",
+        submitted_at=datetime.now(UTC),
+    )
+    session.add(proposal)
+    session.flush()
+    item = ProposalItem(
+        proposal_id=proposal.id,
+        position=0,
+        command_type="TestFixture",
+        payload_json={"terminal_status": status},
+        status="valid",
+    )
+    session.add(item)
+    session.flush()
+    session.add(
+        ReviewDecision(
+            proposal_item_id=item.id,
+            reviewer_actor_id=reviewer.id,
+            decision="reject" if status == "rejected" else "accept",
+            rationale="Terminal workflow fixture",
+        )
+    )
+    session.flush()
+    item.status = "rejected" if status == "rejected" else status
+    if status == "partially_accepted":
+        item.status = "accepted"
+    session.flush()
+    proposal.status = status
+    if status != "stale":
+        proposal.applied_at = datetime.now(UTC)
+        proposal.applied_by_actor_id = reviewer.id
+    session.commit()
+    return proposal, item, reviewer
+
+
 def _claim_state(session: Session, slug: str):
     namespace = Namespace(slug=slug, name=slug)
     session.add(namespace)
@@ -80,10 +142,8 @@ def _claim_state(session: Session, slug: str):
         proposer_actor_id=proposer.id,
         title=f"Synthetic accepted fixture {slug}",
         base_revision_token=0,
-        status="accepted",
+        status="in_review",
         submitted_at=datetime.now(UTC),
-        applied_at=datetime.now(UTC),
-        applied_by_actor_id=reviewer.id,
     )
     session.add(provenance_proposal)
     session.flush()
@@ -92,7 +152,7 @@ def _claim_state(session: Session, slug: str):
         position=0,
         command_type="TestFixture",
         payload_json={"fixture": slug},
-        status="accepted",
+        status="valid",
     )
     session.add(provenance_item)
     session.flush()
@@ -104,6 +164,13 @@ def _claim_state(session: Session, slug: str):
             rationale="Synthetic fixture provenance",
         )
     )
+    session.flush()
+    provenance_item.status = "accepted"
+    session.flush()
+    provenance_proposal.status = "accepted"
+    provenance_proposal.applied_at = datetime.now(UTC)
+    provenance_proposal.applied_by_actor_id = reviewer.id
+    session.flush()
     claim_id, version_id = _identity(), _identity()
     claim = Claim(
         id=claim_id,
@@ -125,6 +192,45 @@ def _claim_state(session: Session, slug: str):
     session.add_all([claim, version])
     session.commit()
     return namespace, proposer, reviewer, claim, version, provenance_item
+
+
+def _submitted_claim_proposal(
+    session: Session,
+    namespace: Namespace,
+    proposer: Actor,
+    *,
+    title: str,
+    item_count: int = 1,
+    base_revision_token: int | None = None,
+) -> tuple[Proposal, list[ProposalItem]]:
+    proposal = Proposal(
+        namespace_id=namespace.id,
+        proposer_actor_id=proposer.id,
+        title=title,
+        base_revision_token=(
+            namespace.revision_token if base_revision_token is None else base_revision_token
+        ),
+    )
+    session.add(proposal)
+    session.flush()
+    items = [
+        ProposalItem(
+            proposal_id=proposal.id,
+            position=position,
+            command_type="CreateClaim",
+            payload_json={
+                "wording": f"{title} claim {position}",
+                "scope_json": {"position": position},
+                "valid_from": datetime(2025, 1, position + 1, tzinfo=UTC).isoformat(),
+            },
+        )
+        for position in range(item_count)
+    ]
+    session.add_all(items)
+    session.commit()
+    validate_proposal(session, proposal.id)
+    submit_proposal(session, proposal.id)
+    return proposal, items
 
 
 def _insert_entity_with_process_provenance(
@@ -162,7 +268,7 @@ def _insert_entity_with_process_provenance(
         proposer_actor_id=proposer.id,
         title="Process provenance candidate",
         base_revision_token=0,
-        status=proposal_status,
+        status="in_review",
     )
     session.add(proposal)
     session.flush()
@@ -171,7 +277,7 @@ def _insert_entity_with_process_provenance(
         position=0,
         command_type="TestFixture",
         payload_json={},
-        status=item_status,
+        status="valid",
     )
     session.add(item)
     session.flush()
@@ -184,6 +290,14 @@ def _insert_entity_with_process_provenance(
                 rationale=f"Process provenance {decision}",
             )
         )
+    session.flush()
+    item.status = item_status
+    session.flush()
+    proposal.status = proposal_status
+    if proposal_status in {"accepted", "partially_accepted", "rejected"}:
+        proposal.applied_at = datetime.now(UTC)
+        proposal.applied_by_actor_id = reviewer.id
+    session.flush()
     item_reference = {
         "existing": item.id,
         "missing": _identity(),
@@ -286,6 +400,322 @@ def test_valid_terminal_process_provenance_accepts_canonical_rows(
     with Session(postgres_engine) as session:
         entity = _insert_entity_with_process_provenance(session, proposal_status=proposal_status)
         assert entity.proposal_item_id is not None
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("terminal_status", ["accepted", "partially_accepted", "rejected", "stale"])
+def test_terminal_proposals_reject_every_update_and_delete(
+    postgres_engine: Engine, terminal_status: str
+) -> None:
+    with Session(postgres_engine, expire_on_commit=False) as session:
+        proposal, _, _ = _terminal_workflow_fixture(session, terminal_status)
+        proposal_id = proposal.id
+
+    with pytest.raises(DBAPIError, match="terminal proposals are immutable"):
+        with postgres_engine.begin() as connection:
+            connection.execute(
+                text("UPDATE proposals SET status = 'in_review' WHERE id = :id"),
+                {"id": proposal_id},
+            )
+    with pytest.raises(DBAPIError, match="terminal proposals are immutable"):
+        with postgres_engine.begin() as connection:
+            connection.execute(text("DELETE FROM proposals WHERE id = :id"), {"id": proposal_id})
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("operation", ["update", "delete"])
+def test_items_beneath_terminal_proposals_are_sealed(
+    postgres_engine: Engine, operation: str
+) -> None:
+    with Session(postgres_engine, expire_on_commit=False) as session:
+        _, item, _ = _terminal_workflow_fixture(session)
+        item_id = item.id
+    statement = (
+        "UPDATE proposal_items SET status = 'rejected' WHERE id = :id"
+        if operation == "update"
+        else "DELETE FROM proposal_items WHERE id = :id"
+    )
+    with pytest.raises(
+        DBAPIError,
+        match=r"(proposal items under terminal proposals|submitted proposal items) are immutable",
+    ):
+        with postgres_engine.begin() as connection:
+            connection.execute(text(statement), {"id": item_id})
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("decision", ["accept", "reject", "request_changes", "abstain"])
+def test_terminal_proposals_reject_late_reviews(postgres_engine: Engine, decision: str) -> None:
+    with Session(postgres_engine, expire_on_commit=False) as session:
+        _, item, reviewer = _terminal_workflow_fixture(session)
+        late_review = ReviewDecision(
+            proposal_item_id=item.id,
+            reviewer_actor_id=reviewer.id,
+            decision=decision,
+            rationale="Too late",
+        )
+        session.add(late_review)
+        with pytest.raises(DBAPIError, match="only be recorded while proposal is in_review"):
+            session.commit()
+
+
+@pytest.mark.postgres
+def test_review_insertion_remains_available_while_in_review(postgres_engine: Engine) -> None:
+    suffix = _identity()
+    with Session(postgres_engine, expire_on_commit=False) as session:
+        namespace = Namespace(slug=f"open-review-{suffix}", name="Open review")
+        session.add(namespace)
+        session.flush()
+        proposer = Actor(
+            namespace_id=namespace.id,
+            kind="human",
+            display_name="Open proposer",
+            external_id=f"open-proposer-{suffix}",
+        )
+        reviewer = Actor(
+            namespace_id=namespace.id,
+            kind="human",
+            display_name="Open reviewer",
+            external_id=f"open-reviewer-{suffix}",
+        )
+        session.add_all([proposer, reviewer])
+        session.flush()
+        proposal = Proposal(
+            namespace_id=namespace.id,
+            proposer_actor_id=proposer.id,
+            title="Open review proposal",
+            base_revision_token=0,
+            status="in_review",
+        )
+        session.add(proposal)
+        session.flush()
+        item = ProposalItem(
+            proposal_id=proposal.id,
+            position=0,
+            command_type="TestFixture",
+            payload_json={},
+            status="valid",
+        )
+        session.add(item)
+        session.flush()
+        review = ReviewDecision(
+            proposal_item_id=item.id,
+            reviewer_actor_id=reviewer.id,
+            decision="abstain",
+            rationale="Valid open review",
+        )
+        session.add(review)
+        session.commit()
+        assert session.get(ReviewDecision, review.id) is not None
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("decisions", "expected_status", "created_count"),
+    [
+        (("accept", "accept"), "accepted", 2),
+        (("accept", "reject"), "partially_accepted", 1),
+        (("reject", "reject"), "rejected", 0),
+    ],
+)
+def test_terminal_application_results_remain_supported_and_sealed(
+    postgres_engine: Engine,
+    decisions: tuple[str, str],
+    expected_status: str,
+    created_count: int,
+) -> None:
+    suffix = _identity()
+    with Session(postgres_engine, expire_on_commit=False) as session:
+        namespace, proposer, reviewer, _, _, _ = _claim_state(session, f"terminal-apply-{suffix}")
+        proposal, items = _submitted_claim_proposal(
+            session,
+            namespace,
+            proposer,
+            title=f"Terminal application {suffix}",
+            item_count=2,
+        )
+        for item, decision in zip(items, decisions, strict=True):
+            add_review(
+                session,
+                proposal.id,
+                item.id,
+                reviewer.id,
+                decision,
+                f"Terminal application {decision}",
+            )
+        result = apply_proposal(session, proposal.id, reviewer.id)
+        assert result.status == expected_status
+        assert sum(len(item.created_canonical_ids_json) for item in items) == created_count * 2
+        terminal_status = result.status
+        with pytest.raises(DBAPIError, match="terminal proposals are immutable"):
+            result.status = "in_review"
+            session.commit()
+        session.rollback()
+        session.refresh(result)
+        assert result.status == terminal_status
+
+
+@pytest.mark.postgres
+def test_stale_application_result_is_stable_and_sealed(postgres_engine: Engine) -> None:
+    suffix = _identity()
+    with Session(postgres_engine, expire_on_commit=False) as session:
+        namespace, proposer, reviewer, _, _, _ = _claim_state(session, f"terminal-stale-{suffix}")
+        proposal, items = _submitted_claim_proposal(
+            session,
+            namespace,
+            proposer,
+            title=f"Stale application {suffix}",
+            base_revision_token=namespace.revision_token + 1,
+        )
+        add_review(
+            session,
+            proposal.id,
+            items[0].id,
+            reviewer.id,
+            "accept",
+            "Accept before stale detection",
+        )
+        with pytest.raises(ConflictError, match="Namespace changed"):
+            apply_proposal(session, proposal.id, reviewer.id)
+        session.refresh(proposal)
+        session.refresh(items[0])
+        assert proposal.status == "stale"
+        assert items[0].status == "stale"
+        with pytest.raises(DBAPIError, match="terminal proposals are immutable"):
+            proposal.status = "in_review"
+            session.commit()
+        session.rollback()
+        session.refresh(proposal)
+        assert proposal.status == "stale"
+
+
+@pytest.mark.postgres
+def test_review_apply_races_serialize_on_the_parent_proposal(postgres_engine: Engine) -> None:
+    suffix = _identity()
+    with Session(postgres_engine, expire_on_commit=False) as setup_session:
+        namespace, proposer, reviewer, _, _, _ = _claim_state(setup_session, f"race-{suffix}")
+        second_reviewer = Actor(
+            namespace_id=namespace.id,
+            kind="human",
+            display_name="Concurrent reviewer",
+            external_id=f"race-reviewer-{suffix}",
+        )
+        setup_session.add(second_reviewer)
+        setup_session.commit()
+        proposal, items = _submitted_claim_proposal(
+            setup_session, namespace, proposer, title=f"Race {suffix}"
+        )
+        add_review(
+            setup_session,
+            proposal.id,
+            items[0].id,
+            reviewer.id,
+            "accept",
+            "Initial acceptance",
+        )
+        proposal_id = proposal.id
+        item_id = items[0].id
+        reviewer_id = reviewer.id
+        second_reviewer_id = second_reviewer.id
+
+    # A review that obtains the proposal lock first is visible to apply.
+    with Session(postgres_engine) as blocking_review_session:
+        blocking_review_session.add(
+            ReviewDecision(
+                proposal_item_id=item_id,
+                reviewer_actor_id=second_reviewer_id,
+                decision="reject",
+                rationale="Concurrent blocking decision",
+            )
+        )
+        blocking_review_session.flush()
+
+        def apply_after_review() -> str:
+            with Session(postgres_engine) as concurrent_apply_session:
+                return apply_proposal(concurrent_apply_session, proposal_id, reviewer_id).status
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(apply_after_review)
+            blocking_review_session.commit()
+            assert future.result(timeout=10) == "rejected"
+
+    with Session(postgres_engine) as verification_session:
+        assert (
+            verification_session.scalar(
+                select(func.count(Claim.id)).where(Claim.proposal_item_id == item_id)
+            )
+            == 0
+        )
+        stored = verification_session.get(Proposal, proposal_id)
+        assert stored is not None and stored.status == "rejected"
+
+    # If apply owns the lock first, a late review waits and then fails on terminal state.
+    with Session(postgres_engine, expire_on_commit=False) as setup_session:
+        namespace, proposer, reviewer, _, _, _ = _claim_state(setup_session, f"late-race-{suffix}")
+        second_reviewer = Actor(
+            namespace_id=namespace.id,
+            kind="human",
+            display_name="Late concurrent reviewer",
+            external_id=f"late-race-reviewer-{suffix}",
+        )
+        setup_session.add(second_reviewer)
+        setup_session.commit()
+        proposal, items = _submitted_claim_proposal(
+            setup_session, namespace, proposer, title=f"Late race {suffix}"
+        )
+        add_review(
+            setup_session,
+            proposal.id,
+            items[0].id,
+            reviewer.id,
+            "accept",
+            "Initial acceptance",
+        )
+        proposal_id = proposal.id
+        item_id = items[0].id
+        reviewer_id = reviewer.id
+        second_reviewer_id = second_reviewer.id
+
+    def insert_late_review() -> str:
+        with Session(postgres_engine) as late_review_session:
+            try:
+                add_review(
+                    late_review_session,
+                    proposal_id,
+                    item_id,
+                    second_reviewer_id,
+                    "request_changes",
+                    "Must not arrive after apply",
+                )
+            except ConflictError as error:
+                return error.code
+        return "unexpected success"
+
+    with Session(postgres_engine) as applying_session:
+        applying_session.scalar(
+            select(Proposal).where(Proposal.id == proposal_id).with_for_update()
+        )
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(insert_late_review)
+            assert apply_proposal(applying_session, proposal_id, reviewer_id).status == "accepted"
+            assert future.result(timeout=10) == "proposal.not_in_review"
+
+    with Session(postgres_engine) as verification_session:
+        assert (
+            verification_session.scalar(
+                select(func.count(Claim.id)).where(Claim.proposal_item_id == item_id)
+            )
+            == 1
+        )
+        assert (
+            verification_session.scalar(
+                select(func.count(ReviewDecision.id)).where(
+                    ReviewDecision.proposal_item_id == item_id,
+                    ReviewDecision.decision == "request_changes",
+                )
+            )
+            == 0
+        )
 
 
 @pytest.mark.postgres

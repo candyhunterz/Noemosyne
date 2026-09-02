@@ -35,6 +35,7 @@ def test_every_substantive_assessment_accepts_inspectable_input(verdict: Verdict
 
 def test_every_canonical_table_is_covered_by_deferred_process_provenance() -> None:
     migration = runpy.run_path("migrations/versions/0004_process_provenance.py")
+    seal_migration = runpy.run_path("migrations/versions/0005_seal_terminal_provenance.py")
     canonical_tables = {
         mapper.local_table.name
         for mapper in Base.registry.mappers
@@ -42,6 +43,7 @@ def test_every_canonical_table_is_covered_by_deferred_process_provenance() -> No
     }
 
     assert canonical_tables == set(migration["CANONICAL_TABLES"])
+    assert canonical_tables == set(seal_migration["CANONICAL_TABLES"])
     for mapper in Base.registry.mappers:
         if mapper.local_table.name not in canonical_tables:
             continue

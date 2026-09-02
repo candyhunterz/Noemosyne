@@ -31,27 +31,29 @@ Milestone 1 is a **curated AI-research claim ledger**, not an autonomous world m
 4. representing typed relationships and evidence dependence;
 5. accepting changes through a proposal and review workflow;
 6. publishing immutable epistemic assessments and revision history;
-7. retrieving compact, structured `EpistemicContextBundle` objects through REST and MCP;
-8. comparing AI answers with Noemosyne against search/RAG baselines.
+7. retrieving compact, structured `EpistemicContextBundle` objects through the versioned REST API;
+8. reviewing and applying proposals in the trusted-local web workflow.
 
-The MVP succeeds only if the structured context improves citation correctness, contradiction handling, temporal fidelity, or calibrated abstention on a fixed evaluation set.
+MCP is future architecture deferred to Milestone 2 by ADR 0007. Autonomous evaluation, ingestion, model-provider calls, and search/RAG baseline experiments are not implemented in M1.
 
 ## Repository shape
 
 ```text
 apps/
   api/          FastAPI HTTP service
-  worker/       ingestion and evaluation jobs
+  worker/       non-autonomous job runner stub
   web/          Next.js human interface
-  mcp/          thin MCP adapter
 packages/
   domain/       pure epistemic rules and types
-  db/           SQLAlchemy mappings and migrations
-  ingestion/    source adapters and extraction pipeline
-  retrieval/    lexical, semantic, and graph retrieval
-  evals/        fixtures, graders, and experiment runner
+  db/           SQLAlchemy mappings, proposal application, and seed tooling
+  retrieval/    historical context and bounded graph retrieval
+  testkit/      shared test factories and assertions
 examples/
   ai-research/  redistributable seed dataset
+migrations/     Alembic schema and integrity enforcement
+tests/          unit, property, contract, PostgreSQL integration, and Playwright E2E
+docs/adr/       accepted architectural decisions
+infra/docker/   pinned API and web runtime images
 ```
 
 ## Read the design
@@ -67,7 +69,7 @@ The supplied numbered documents are normative in ascending specificity. The epis
 
 ## Status
 
-Milestone 1 is implemented as a PostgreSQL-backed FastAPI service, deterministic seed importer, typed proposal/review workflow, historical retrieval layer, and minimal Next.js review/read interface.
+Milestone 1 is implemented as a PostgreSQL-backed FastAPI service, deterministic seed importer, typed proposal/review workflow, historical retrieval layer, and minimal Next.js read/review/apply interface.
 
 ## Quick start
 
@@ -94,11 +96,11 @@ uv run uvicorn noemosyne_api.main:app --reload
 pnpm dev
 ```
 
-Run the complete backend, contract, TypeScript, and web build checks with `make check`. Operational backup/restore and deployment boundaries are in [`docs/operations.md`](docs/operations.md).
+Run formatting, lint, strict typing, backend/contract/PostgreSQL tests, TypeScript checks, and the production web build with `make check`. With the stack and seed running, execute the browser acceptance workflow with `pnpm e2e`. Operational backup/restore and deployment boundaries are in [`docs/operations.md`](docs/operations.md).
 
 ## Architecture and security
 
-PostgreSQL is the only canonical store. Accepted epistemic state enters through immutable proposals, independent item reviews, and atomic application. Claim context is filtered by both recorded and valid time; summaries retain the IDs needed to recover policy, evidence, source locators, and review provenance. The web app uses the generated OpenAPI boundary and does not redefine verdict or relation rules.
+PostgreSQL is the only canonical store. Accepted epistemic state enters through immutable proposals, independent item reviews, conservative append-only review outcomes, and atomic application. Claim context is filtered by both recorded and valid time; summaries retain the IDs needed to recover policy, evidence, source locators or arguments, and review provenance. The web app uses the generated OpenAPI boundary and server-computed review policy.
 
 M1 has no authentication or tenant authorization, so it must run behind operator-controlled access and TLS outside local development. It performs no production model-provider calls and stores no copyrighted seed excerpts. See [`SECURITY.md`](SECURITY.md) before deployment.
 

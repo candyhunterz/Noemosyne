@@ -5,10 +5,13 @@
   "scripts": {
     "dev": "pnpm --filter @noemosyne/web dev",
     "build": "pnpm --filter @noemosyne/web build",
-    "typecheck": "pnpm --filter @noemosyne/web typecheck",
-    "generate:api": "uv run python scripts/generate_openapi.py && pnpm exec openapi-typescript openapi.json -o apps/web/lib/generated-api/schema.d.ts"
+    "typecheck": "pnpm --filter @noemosyne/web typecheck && pnpm exec tsc --noEmit -p tsconfig.e2e.json",
+    "generate:api": "uv run python scripts/generate_openapi.py && pnpm exec openapi-typescript openapi.json -o apps/web/lib/generated-api/schema.d.ts",
+    "e2e": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "25.9.5",
     "openapi-typescript": "7.10.1"
   }
 }

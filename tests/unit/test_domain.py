@@ -12,6 +12,7 @@ from noemosyne_domain.models import (
     Verdict,
     review_outcome,
     validate_assessment_inputs,
+    validate_evidence_item_content,
     validate_relation,
 )
 
@@ -57,4 +58,37 @@ def test_review_outcome_is_conservative() -> None:
         review_outcome((ReviewDecisionKind.ACCEPT, ReviewDecisionKind.REJECT))
         is ReviewDecisionKind.REJECT
     )
+    assert (
+        review_outcome(
+            (
+                ReviewDecisionKind.ACCEPT,
+                ReviewDecisionKind.REJECT,
+                ReviewDecisionKind.REQUEST_CHANGES,
+            )
+        )
+        is ReviewDecisionKind.REQUEST_CHANGES
+    )
     assert review_outcome((ReviewDecisionKind.ABSTAIN,)) is None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"kind": "source_fragment", "source_fragment_ids": []},
+        {
+            "kind": "source_fragment",
+            "source_fragment_ids": [str(uuid4())],
+            "argument_id": str(uuid4()),
+        },
+        {"kind": "argument"},
+        {"kind": "argument", "argument_id": str(uuid4()), "source_fragment_ids": [str(uuid4())]},
+    ],
+)
+def test_evidence_item_kind_requires_exactly_matching_content(payload) -> None:
+    with pytest.raises(DomainError) as raised:
+        validate_evidence_item_content(
+            payload["kind"],
+            tuple(payload.get("source_fragment_ids", ())),
+            payload.get("argument_id"),
+        )
+    assert raised.value.code == "evidence.invalid_provenance"

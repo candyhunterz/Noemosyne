@@ -1,4 +1,4 @@
-.PHONY: bootstrap check test start stop migrate seed generate-api
+.PHONY: bootstrap check test e2e start stop migrate seed generate-api
 
 PYTHONPATH := apps/api:apps/worker:packages/domain:packages/db:packages/retrieval:packages/testkit
 export PYTHONPATH
@@ -17,6 +17,9 @@ check:
 
 test:
 	uv run pytest
+
+e2e:
+	pnpm e2e
 
 start:
 	docker compose up --build

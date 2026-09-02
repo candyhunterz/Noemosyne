@@ -6,6 +6,8 @@ from datetime import datetime
 from typing import Any
 
 from noemosyne_db.models import (
+    Argument,
+    ArgumentPremise,
     AssessmentInput,
     AssessmentPolicy,
     Challenge,
@@ -80,6 +82,9 @@ def build_context_bundle(
         .where(
             EvidenceLink.claim_id == claim_id,
             _historical_filter(EvidenceLink, knowledge_cutoff, domain_time),
+            EvidenceItem.status == "accepted",
+            EvidenceItem.namespace_id == claim.namespace_id,
+            EvidenceItem.recorded_at <= knowledge_cutoff,
         )
         .order_by(
             EvidenceLink.stance,
@@ -90,9 +95,83 @@ def build_context_bundle(
     ).all()
 
     stance_counts: dict[str, int] = {"supports": 0, "challenges": 0, "contextualizes": 0}
-    omissions: dict[str, int] = {"supports": 0, "challenges": 0, "contextualizes": 0}
+    omissions: dict[str, int] = {
+        "supports": 0,
+        "challenges": 0,
+        "contextualizes": 0,
+        "invalid_provenance": 0,
+    }
     grouped: dict[str, dict[str, Any]] = {}
     for link, item, group in evidence_rows:
+        source_rows = session.execute(
+            select(SourceFragment, SourceArtifact)
+            .join(EvidenceItemSource, EvidenceItemSource.source_fragment_id == SourceFragment.id)
+            .join(SourceArtifact, SourceArtifact.id == SourceFragment.source_artifact_id)
+            .where(
+                EvidenceItemSource.evidence_item_id == item.id,
+                EvidenceItemSource.status == "accepted",
+                EvidenceItemSource.recorded_at <= knowledge_cutoff,
+                SourceFragment.status == "accepted",
+                SourceFragment.recorded_at <= knowledge_cutoff,
+                SourceArtifact.status == "accepted",
+                SourceArtifact.namespace_id == claim.namespace_id,
+                SourceArtifact.recorded_at <= knowledge_cutoff,
+            )
+            .order_by(SourceArtifact.id, SourceFragment.id)
+        ).all()
+        argument_data = None
+        if item.kind == "argument" and item.argument_id is not None:
+            argument = session.scalar(
+                select(Argument).where(
+                    Argument.id == item.argument_id,
+                    Argument.namespace_id == claim.namespace_id,
+                    Argument.status == "accepted",
+                    Argument.recorded_at <= knowledge_cutoff,
+                )
+            )
+            if argument is not None:
+                premises = session.scalars(
+                    select(ArgumentPremise)
+                    .where(
+                        ArgumentPremise.argument_id == argument.id,
+                        ArgumentPremise.status == "accepted",
+                        ArgumentPremise.recorded_at <= knowledge_cutoff,
+                    )
+                    .order_by(ArgumentPremise.position, ArgumentPremise.id)
+                ).all()
+                if premises:
+                    argument_data = {
+                        "id": argument.id,
+                        "conclusion_claim_id": argument.conclusion_claim_id,
+                        "author_actor_id": argument.author_actor_id,
+                        "inference_scheme": argument.inference_scheme,
+                        "rationale": argument.rationale,
+                        "premises": [
+                            {
+                                "type": premise.premise_type,
+                                "id": premise.premise_id,
+                                "position": premise.position,
+                            }
+                            for premise in premises
+                        ],
+                    }
+        valid_source_item = (
+            item.kind == "source_fragment"
+            and bool(source_rows)
+            and all(
+                fragment.locator_json
+                and fragment.license_basis.strip()
+                and (fragment.stored_text is None or fragment.text_hash is not None)
+                and source.title.strip()
+                and source.canonical_uri.strip()
+                and source.license_basis.strip()
+                for fragment, source in source_rows
+            )
+        )
+        valid_argument_item = item.kind == "argument" and argument_data is not None
+        if not valid_source_item and not valid_argument_item:
+            omissions["invalid_provenance"] += 1
+            continue
         if stance_counts[link.stance] >= max_evidence_per_stance:
             omissions[link.stance] += 1
             continue
@@ -111,13 +190,6 @@ def build_context_bundle(
                 "items": [],
             },
         )
-        source_rows = session.execute(
-            select(SourceFragment, SourceArtifact)
-            .join(EvidenceItemSource, EvidenceItemSource.source_fragment_id == SourceFragment.id)
-            .join(SourceArtifact, SourceArtifact.id == SourceFragment.source_artifact_id)
-            .where(EvidenceItemSource.evidence_item_id == item.id)
-            .order_by(SourceArtifact.id, SourceFragment.id)
-        ).all()
         group_data["items"].append(
             {
                 "evidence_link_id": link.id,
@@ -129,6 +201,7 @@ def build_context_bundle(
                 "caveats": link.caveats_json,
                 "evaluator_actor_id": link.evaluator_actor_id,
                 "assessment_policy_id": link.assessment_policy_id,
+                "argument": argument_data,
                 "sources": [
                     {
                         "source_id": source.id,

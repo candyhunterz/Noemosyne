@@ -23,7 +23,7 @@ def trace_claim_graph(
     node_limit = min(max(max_nodes, 1), 100)
     visited = {start_claim_id}
     frontier = {start_claim_id}
-    edges: list[dict[str, str]] = []
+    edges: list[dict[str, str | int]] = []
     for depth in range(1, depth_limit + 1):
         if not frontier or len(visited) >= node_limit:
             break
@@ -58,7 +58,7 @@ def trace_claim_graph(
                     "source": row.source_claim_id,
                     "target": row.target_claim_id,
                     "type": row.relation_type,
-                    "depth": str(depth),
+                    "depth": depth,
                 }
             )
         frontier = next_frontier

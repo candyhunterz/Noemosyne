@@ -161,6 +161,24 @@ def validate_assessment_inputs(verdict: Verdict, input_ids: tuple[UUID, ...]) ->
         )
 
 
+def validate_evidence_item_content(
+    kind: str, source_fragment_ids: tuple[object, ...], argument_id: object | None
+) -> None:
+    """Require exactly the provenance shape selected by an evidence item's kind."""
+    if kind not in {"source_fragment", "argument"}:
+        raise DomainError("evidence.invalid_kind", "M1 evidence is source_fragment or argument")
+    if kind == "source_fragment" and (not source_fragment_ids or argument_id is not None):
+        raise DomainError(
+            "evidence.invalid_provenance",
+            "source_fragment evidence requires one or more fragments and no argument",
+        )
+    if kind == "argument" and (argument_id is None or source_fragment_ids):
+        raise DomainError(
+            "evidence.invalid_provenance",
+            "argument evidence requires exactly one argument and no fragments",
+        )
+
+
 def validate_relation(relation_type: str, context: dict[str, Any]) -> None:
     """Validate the controlled relation vocabulary and contradiction context."""
     if relation_type not in ALLOWED_RELATIONS:

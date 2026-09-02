@@ -20,26 +20,84 @@ from noemosyne_db.models import (
     SourceArtifact,
     SourceFragment,
 )
-from noemosyne_db.proposals import add_review, apply_proposal, submit_proposal, validate_proposal
+from noemosyne_db.proposals import (
+    add_review,
+    apply_proposal,
+    effective_review_outcome,
+    submit_proposal,
+    validate_proposal,
+)
 from noemosyne_retrieval import build_context_bundle, trace_claim_graph
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
 from ..dependencies import get_session
 from ..schemas import (
+    ActivityResponse,
+    ActorListResponse,
     ApplyRequest,
+    ClaimHistoryResponse,
+    ClaimResponse,
+    ContextBundleResponse,
     GraphTraceRequest,
+    GraphTraceResponse,
+    HealthResponse,
+    NamespaceResponse,
+    ProblemDetail,
     ProposalCreate,
     ProposalItemCreate,
+    ProposalListResponse,
+    ProposalResponse,
     ReviewCreate,
     SearchRequest,
+    SearchResponse,
+    SourceResponse,
 )
 
-router = APIRouter(prefix="/v1")
+PROBLEM_RESPONSES: dict[int | str, dict[str, Any]] = {
+    400: {
+        "model": ProblemDetail,
+        "description": "Domain invariant violated",
+        "content": {
+            "application/problem+json": {"schema": {"$ref": "#/components/schemas/ProblemDetail"}}
+        },
+    },
+    404: {
+        "model": ProblemDetail,
+        "description": "Not found",
+        "content": {
+            "application/problem+json": {"schema": {"$ref": "#/components/schemas/ProblemDetail"}}
+        },
+    },
+    409: {
+        "model": ProblemDetail,
+        "description": "Conflict",
+        "content": {
+            "application/problem+json": {"schema": {"$ref": "#/components/schemas/ProblemDetail"}}
+        },
+    },
+    422: {
+        "model": ProblemDetail,
+        "description": "Request validation failed",
+        "content": {
+            "application/problem+json": {"schema": {"$ref": "#/components/schemas/ProblemDetail"}}
+        },
+    },
+}
+router = APIRouter(prefix="/v1", responses=PROBLEM_RESPONSES)
 DbSession = Annotated[Session, Depends(get_session)]
 
 
-def _serialize_proposal(session: Session, proposal: Proposal) -> dict[str, Any]:
+def _public_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Remove source text from proposal payloads while retaining reviewable metadata."""
+    public = dict(payload)
+    if "stored_text" in public:
+        public.pop("stored_text")
+        public["stored_text_present"] = True
+    return public
+
+
+def _serialize_proposal(session: Session, proposal: Proposal) -> ProposalResponse:
     items = session.scalars(
         select(ProposalItem)
         .where(ProposalItem.proposal_id == proposal.id)
@@ -57,11 +115,12 @@ def _serialize_proposal(session: Session, proposal: Proposal) -> dict[str, Any]:
                 "id": item.id,
                 "position": item.position,
                 "command_type": item.command_type,
-                "payload": item.payload_json,
+                "payload": _public_payload(item.payload_json),
                 "preconditions": item.preconditions_json,
                 "status": item.status,
                 "validation_errors": item.validation_errors_json,
                 "created_canonical_ids": item.created_canonical_ids_json,
+                "effective_outcome": effective_review_outcome(session, item.id),
                 "reviews": [
                     {
                         "id": review.id,
@@ -74,75 +133,115 @@ def _serialize_proposal(session: Session, proposal: Proposal) -> dict[str, Any]:
                 ],
             }
         )
-    return {
-        "id": proposal.id,
-        "namespace_id": proposal.namespace_id,
-        "proposer_actor_id": proposal.proposer_actor_id,
-        "title": proposal.title,
-        "description": proposal.description,
-        "base_revision_token": proposal.base_revision_token,
-        "status": proposal.status,
-        "recorded_at": proposal.recorded_at,
-        "submitted_at": proposal.submitted_at,
-        "applied_at": proposal.applied_at,
-        "items": result_items,
-    }
+    return ProposalResponse.model_validate(
+        {
+            "id": proposal.id,
+            "namespace_id": proposal.namespace_id,
+            "proposer_actor_id": proposal.proposer_actor_id,
+            "title": proposal.title,
+            "description": proposal.description,
+            "base_revision_token": proposal.base_revision_token,
+            "status": proposal.status,
+            "recorded_at": proposal.recorded_at,
+            "submitted_at": proposal.submitted_at,
+            "applied_at": proposal.applied_at,
+            "applied_by_actor_id": proposal.applied_by_actor_id,
+            "items": result_items,
+        }
+    )
 
 
-@router.get("/health/live")
-def live() -> dict[str, str]:
-    return {"status": "ok"}
+@router.get("/health/live", response_model=HealthResponse)
+def live() -> HealthResponse:
+    return HealthResponse(status="ok")
 
 
-@router.get("/health/ready")
-def ready(session: DbSession) -> dict[str, str]:
+@router.get("/health/ready", response_model=HealthResponse)
+def ready(session: DbSession) -> HealthResponse:
     session.execute(text("SELECT 1"))
-    return {"status": "ready"}
+    return HealthResponse(status="ready")
 
 
-@router.get("/namespaces/{namespace_id}")
-def get_namespace(namespace_id: str, session: DbSession) -> dict[str, Any]:
+@router.get("/namespaces/{namespace_id}", response_model=NamespaceResponse)
+def get_namespace(namespace_id: str, session: DbSession) -> NamespaceResponse:
     namespace = session.get(Namespace, namespace_id)
     if namespace is None:
         from noemosyne_domain.errors import NotFoundError
 
         raise NotFoundError("namespace.not_found", "Namespace not found")
-    return {
-        "id": namespace.id,
-        "slug": namespace.slug,
-        "name": namespace.name,
-        "revision_token": namespace.revision_token,
-        "recorded_at": namespace.recorded_at,
-    }
+    return NamespaceResponse.model_validate(
+        {
+            "id": namespace.id,
+            "slug": namespace.slug,
+            "name": namespace.name,
+            "revision_token": namespace.revision_token,
+            "recorded_at": namespace.recorded_at,
+        }
+    )
 
 
-@router.get("/claims/{claim_id}")
-def get_claim(claim_id: str, session: DbSession) -> dict[str, Any]:
+@router.get("/namespaces/{namespace_id}/actors", response_model=ActorListResponse)
+def list_namespace_actors(namespace_id: str, session: DbSession) -> ActorListResponse:
+    namespace = session.get(Namespace, namespace_id)
+    if namespace is None:
+        from noemosyne_domain.errors import NotFoundError
+
+        raise NotFoundError("namespace.not_found", "Namespace not found")
+    actors = session.scalars(
+        select(Actor)
+        .where(Actor.namespace_id == namespace_id)
+        .order_by(Actor.display_name, Actor.id)
+    ).all()
+    return ActorListResponse.model_validate(
+        {
+            "actors": [
+                {
+                    "id": actor.id,
+                    "namespace_id": actor.namespace_id,
+                    "kind": actor.kind,
+                    "display_name": actor.display_name,
+                    "external_id": actor.external_id,
+                    "provenance": actor.provenance_json,
+                    "recorded_at": actor.recorded_at,
+                }
+                for actor in actors
+            ]
+        }
+    )
+
+
+@router.get("/claims/{claim_id}", response_model=ClaimResponse)
+def get_claim(claim_id: str, session: DbSession) -> ClaimResponse:
     claim = session.get(Claim, claim_id)
     if claim is None or claim.status != "accepted":
         from noemosyne_domain.errors import NotFoundError
 
         raise NotFoundError("claim.not_found", "Claim not found")
     version = session.get(ClaimVersion, claim.current_version_id)
-    return {
-        "id": claim.id,
-        "namespace_id": claim.namespace_id,
-        "claim_form": claim.claim_form,
-        "status": claim.status,
-        "current_version": None
-        if version is None
-        else {
-            "id": version.id,
-            "version_number": version.version_number,
-            "wording": version.wording,
-            "scope": version.scope_json,
-            "valid_from": version.valid_from,
-            "recorded_at": version.recorded_at,
-        },
-    }
+    if version is None:
+        from noemosyne_domain.errors import DomainError
+
+        raise DomainError("claim.incomplete", "Accepted claim has no current version")
+    return ClaimResponse.model_validate(
+        {
+            "id": claim.id,
+            "namespace_id": claim.namespace_id,
+            "claim_form": claim.claim_form,
+            "status": claim.status,
+            "current_version": {
+                "id": version.id,
+                "version_number": version.version_number,
+                "wording": version.wording,
+                "scope": version.scope_json,
+                "valid_from": version.valid_from,
+                "recorded_at": version.recorded_at,
+                "supersedes_id": version.supersedes_id,
+            },
+        }
+    )
 
 
-@router.get("/claims/{claim_id}/context")
+@router.get("/claims/{claim_id}/context", response_model=ContextBundleResponse)
 def get_claim_context(
     claim_id: str,
     session: DbSession,
@@ -151,7 +250,7 @@ def get_claim_context(
     max_evidence_per_stance: Annotated[int, Query(ge=1, le=100)] = 20,
     include_history_summary: bool = True,
     include_open_challenges: bool = True,
-) -> dict[str, Any]:
+) -> ContextBundleResponse:
     cutoff = knowledge_cutoff or datetime.now(UTC)
     domain = domain_time or cutoff
     bundle = build_context_bundle(
@@ -169,17 +268,17 @@ def get_claim_context(
         raise NotFoundError(
             "claim.not_found_at_cutoff", "Claim was not known at the requested cutoff"
         )
-    return bundle
+    return ContextBundleResponse.model_validate(bundle)
 
 
-@router.get("/claims/{claim_id}/history")
+@router.get("/claims/{claim_id}/history", response_model=ClaimHistoryResponse)
 def get_claim_history(
     claim_id: str,
     session: DbSession,
     cutoff: datetime | None = None,
     from_cutoff: datetime | None = None,
     to_cutoff: datetime | None = None,
-) -> dict[str, Any]:
+) -> ClaimHistoryResponse:
     if cutoff is not None and (from_cutoff is not None or to_cutoff is not None):
         from noemosyne_domain.errors import DomainError
 
@@ -218,25 +317,27 @@ def get_claim_history(
     revisions = session.scalars(
         revision_query.order_by(RevisionEvent.recorded_at, RevisionEvent.id)
     ).all()
-    return {
-        "claim_id": claim_id,
-        "timeline": timeline,
-        "revisions": [
-            {
-                "id": revision.id,
-                "before_assessment_id": revision.before_assessment_id,
-                "after_assessment_id": revision.after_assessment_id,
-                "rationale": revision.rationale,
-                "recorded_at": revision.recorded_at,
-            }
-            for revision in revisions
-        ],
-        "comparison": comparison,
-    }
+    return ClaimHistoryResponse.model_validate(
+        {
+            "claim_id": claim_id,
+            "timeline": timeline,
+            "revisions": [
+                {
+                    "id": revision.id,
+                    "before_assessment_id": revision.before_assessment_id,
+                    "after_assessment_id": revision.after_assessment_id,
+                    "rationale": revision.rationale,
+                    "recorded_at": revision.recorded_at,
+                }
+                for revision in revisions
+            ],
+            "comparison": comparison,
+        }
+    )
 
 
-@router.post("/claims:search")
-def search_claims(body: SearchRequest, session: DbSession) -> dict[str, Any]:
+@router.post("/claims:search", response_model=SearchResponse)
+def search_claims(body: SearchRequest, session: DbSession) -> SearchResponse:
     normalized = body.query.strip().lower()
     substring_match = func.lower(ClaimVersion.wording).contains(normalized)
     predicate = substring_match
@@ -257,29 +358,33 @@ def search_claims(body: SearchRequest, session: DbSession) -> dict[str, Any]:
         .limit(body.limit)
     )
     rows = session.execute(query).all()
-    return {
-        "query": body.query,
-        "results": [
-            {
-                "claim_id": claim.id,
-                "wording": version.wording,
-                "scope": version.scope_json,
-                "scores": {"substring": 1.0, "lexical": None, "semantic": None},
-            }
-            for claim, version in rows
-        ],
-    }
-
-
-@router.post("/graph:trace")
-def graph_trace(body: GraphTraceRequest, session: DbSession) -> dict[str, Any]:
-    return trace_claim_graph(
-        session, body.start_claim_id, body.relation_types, body.max_depth, body.max_nodes
+    return SearchResponse.model_validate(
+        {
+            "query": body.query,
+            "results": [
+                {
+                    "claim_id": claim.id,
+                    "wording": version.wording,
+                    "scope": version.scope_json,
+                    "scores": {"substring": 1.0, "lexical": None, "semantic": None},
+                }
+                for claim, version in rows
+            ],
+        }
     )
 
 
-@router.get("/sources/{source_id}")
-def get_source(source_id: str, session: DbSession) -> dict[str, Any]:
+@router.post("/graph:trace", response_model=GraphTraceResponse)
+def graph_trace(body: GraphTraceRequest, session: DbSession) -> GraphTraceResponse:
+    return GraphTraceResponse.model_validate(
+        trace_claim_graph(
+            session, body.start_claim_id, body.relation_types, body.max_depth, body.max_nodes
+        )
+    )
+
+
+@router.get("/sources/{source_id}", response_model=SourceResponse)
+def get_source(source_id: str, session: DbSession) -> SourceResponse:
     source = session.get(SourceArtifact, source_id)
     if source is None or source.status != "accepted":
         from noemosyne_domain.errors import NotFoundError
@@ -290,57 +395,61 @@ def get_source(source_id: str, session: DbSession) -> dict[str, Any]:
         .where(SourceFragment.source_artifact_id == source.id, SourceFragment.status == "accepted")
         .order_by(SourceFragment.id)
     ).all()
-    return {
-        "id": source.id,
-        "kind": source.kind,
-        "title": source.title,
-        "canonical_uri": source.canonical_uri,
-        "authors": source.authors_json,
-        "license_basis": source.license_basis,
-        "access": source.access_json,
-        "fragments": [
-            {
-                "id": fragment.id,
-                "locator": fragment.locator_json,
-                "text_hash": fragment.text_hash,
-                "license_basis": fragment.license_basis,
-            }
-            for fragment in fragments
-        ],
-    }
+    return SourceResponse.model_validate(
+        {
+            "id": source.id,
+            "kind": source.kind,
+            "title": source.title,
+            "canonical_uri": source.canonical_uri,
+            "authors": source.authors_json,
+            "license_basis": source.license_basis,
+            "access": source.access_json,
+            "fragments": [
+                {
+                    "id": fragment.id,
+                    "locator": fragment.locator_json,
+                    "text_hash": fragment.text_hash,
+                    "license_basis": fragment.license_basis,
+                }
+                for fragment in fragments
+            ],
+        }
+    )
 
 
-@router.get("/activity")
+@router.get("/activity", response_model=ActivityResponse)
 def get_activity(
     session: DbSession,
     namespace_id: str | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
-) -> dict[str, Any]:
+) -> ActivityResponse:
     query = select(AuditEvent)
     if namespace_id is not None:
         query = query.where(AuditEvent.namespace_id == namespace_id)
     rows = session.scalars(
         query.order_by(AuditEvent.recorded_at.desc(), AuditEvent.id).limit(limit)
     ).all()
-    return {
-        "events": [
-            {
-                "id": row.id,
-                "event_type": row.event_type,
-                "object_type": row.object_type,
-                "object_id": row.object_id,
-                "actor_id": row.actor_id,
-                "proposal_id": row.proposal_id,
-                "detail": row.detail_json,
-                "recorded_at": row.recorded_at,
-            }
-            for row in rows
-        ]
-    }
+    return ActivityResponse.model_validate(
+        {
+            "events": [
+                {
+                    "id": row.id,
+                    "event_type": row.event_type,
+                    "object_type": row.object_type,
+                    "object_id": row.object_id,
+                    "actor_id": row.actor_id,
+                    "proposal_id": row.proposal_id,
+                    "detail": row.detail_json,
+                    "recorded_at": row.recorded_at,
+                }
+                for row in rows
+            ]
+        }
+    )
 
 
-@router.post("/proposals", status_code=201)
-def create_proposal(body: ProposalCreate, session: DbSession) -> dict[str, Any]:
+@router.post("/proposals", status_code=201, response_model=ProposalResponse)
+def create_proposal(body: ProposalCreate, session: DbSession) -> ProposalResponse:
     namespace = session.get(Namespace, body.namespace_id)
     actor = session.get(Actor, body.proposer_actor_id)
     if namespace is None or actor is None or actor.namespace_id != namespace.id:
@@ -359,10 +468,10 @@ def create_proposal(body: ProposalCreate, session: DbSession) -> dict[str, Any]:
     return _serialize_proposal(session, proposal)
 
 
-@router.post("/proposals/{proposal_id}/items", status_code=201)
+@router.post("/proposals/{proposal_id}/items", status_code=201, response_model=ProposalResponse)
 def add_proposal_item(
     proposal_id: str, body: ProposalItemCreate, session: DbSession
-) -> dict[str, Any]:
+) -> ProposalResponse:
     proposal = session.get(Proposal, proposal_id)
     if proposal is None:
         from noemosyne_domain.errors import NotFoundError
@@ -392,18 +501,18 @@ def add_proposal_item(
     return _serialize_proposal(session, proposal)
 
 
-@router.post("/proposals/{proposal_id}:validate")
-def validate_proposal_route(proposal_id: str, session: DbSession) -> dict[str, Any]:
+@router.post("/proposals/{proposal_id}:validate", response_model=ProposalResponse)
+def validate_proposal_route(proposal_id: str, session: DbSession) -> ProposalResponse:
     return _serialize_proposal(session, validate_proposal(session, proposal_id))
 
 
-@router.post("/proposals/{proposal_id}:submit")
-def submit_proposal_route(proposal_id: str, session: DbSession) -> dict[str, Any]:
+@router.post("/proposals/{proposal_id}:submit", response_model=ProposalResponse)
+def submit_proposal_route(proposal_id: str, session: DbSession) -> ProposalResponse:
     return _serialize_proposal(session, submit_proposal(session, proposal_id))
 
 
-@router.get("/proposals/{proposal_id}")
-def get_proposal(proposal_id: str, session: DbSession) -> dict[str, Any]:
+@router.get("/proposals/{proposal_id}", response_model=ProposalResponse)
+def get_proposal(proposal_id: str, session: DbSession) -> ProposalResponse:
     proposal = session.get(Proposal, proposal_id)
     if proposal is None:
         from noemosyne_domain.errors import NotFoundError
@@ -412,17 +521,17 @@ def get_proposal(proposal_id: str, session: DbSession) -> dict[str, Any]:
     return _serialize_proposal(session, proposal)
 
 
-@router.get("/proposals")
-def list_proposals(session: DbSession, status: str | None = None) -> dict[str, Any]:
+@router.get("/proposals", response_model=ProposalListResponse)
+def list_proposals(session: DbSession, status: str | None = None) -> ProposalListResponse:
     query = select(Proposal)
     if status is not None:
         query = query.where(Proposal.status == status)
     rows = session.scalars(query.order_by(Proposal.recorded_at.desc(), Proposal.id)).all()
-    return {"proposals": [_serialize_proposal(session, row) for row in rows]}
+    return ProposalListResponse(proposals=[_serialize_proposal(session, row) for row in rows])
 
 
-@router.post("/proposals/{proposal_id}/reviews", status_code=201)
-def review_proposal(proposal_id: str, body: ReviewCreate, session: DbSession) -> dict[str, Any]:
+@router.post("/proposals/{proposal_id}/reviews", status_code=201, response_model=ProposalResponse)
+def review_proposal(proposal_id: str, body: ReviewCreate, session: DbSession) -> ProposalResponse:
     add_review(
         session,
         proposal_id,
@@ -436,10 +545,10 @@ def review_proposal(proposal_id: str, body: ReviewCreate, session: DbSession) ->
     return _serialize_proposal(session, proposal)
 
 
-@router.post("/proposals/{proposal_id}:apply")
+@router.post("/proposals/{proposal_id}:apply", response_model=ProposalResponse)
 def apply_proposal_route(
     proposal_id: str, body: ApplyRequest, session: DbSession
-) -> dict[str, Any]:
+) -> ProposalResponse:
     return _serialize_proposal(
         session, apply_proposal(session, proposal_id, body.applied_by_actor_id)
     )

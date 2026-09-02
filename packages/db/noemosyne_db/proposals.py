@@ -10,18 +10,23 @@ from noemosyne_domain.errors import ConflictError, DomainError, NotFoundError
 from noemosyne_domain.models import EvidenceLink as DomainEvidenceLink
 from noemosyne_domain.models import (
     EvidenceStance,
+    ReviewDecisionKind,
     Verdict,
+    review_outcome,
     validate_assessment_inputs,
+    validate_evidence_item_content,
     validate_relation,
 )
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from .models import (
+    Actor,
     Argument,
     ArgumentPremise,
     Assertion,
     AssessmentInput,
+    AssessmentPolicy,
     AuditEvent,
     Challenge,
     Claim,
@@ -138,15 +143,30 @@ def validate_command(command_type: str, payload: dict[str, Any]) -> None:
         if not isinstance(payload["scope_json"], dict):
             raise DomainError("claim.invalid_scope", "scope_json must be an object")
         _parse_time(payload["valid_from"], "valid_from")
+    elif command_type == "RegisterSourceArtifact":
+        if (
+            not str(payload["title"]).strip()
+            or not str(payload["canonical_uri"]).strip()
+            or not str(payload["license_basis"]).strip()
+        ):
+            raise DomainError(
+                "source.incomplete_metadata",
+                "A source requires title, canonical URI, and license basis",
+            )
     elif command_type == "AddSourceFragment":
         if not isinstance(payload["locator_json"], dict) or not payload["locator_json"]:
             raise DomainError("source.locator_required", "A source fragment requires a locator")
+        if not str(payload["license_basis"]).strip():
+            raise DomainError(
+                "source.license_required", "A source fragment requires a license basis"
+            )
         if payload.get("stored_text") is not None and payload.get("text_hash") is None:
             expected = sha256(str(payload["stored_text"]).encode()).hexdigest()
             payload["text_hash"] = expected
     elif command_type == "CreateEvidenceItem":
-        if payload["kind"] not in {"source_fragment", "argument"}:
-            raise DomainError("evidence.invalid_kind", "M1 evidence is source_fragment or argument")
+        source_fragment_ids = tuple(payload.get("source_fragment_ids", ()))
+        argument_id = payload.get("argument_id")
+        validate_evidence_item_content(str(payload["kind"]), source_fragment_ids, argument_id)
     elif command_type == "AddAssertion":
         if payload["stance"] not in {"asserts", "denies", "questions", "withholds"}:
             raise DomainError("assertion.invalid_stance", "Unknown assertion stance")
@@ -248,6 +268,394 @@ def _as_uuid(value: Any) -> Any:
     return UUID(str(value))
 
 
+CandidateReferences = dict[tuple[str, str], dict[str, Any]]
+
+
+def _candidate_reference(command_type: str, payload: dict[str, Any]) -> tuple[str, str] | None:
+    reference_types = {
+        "CreateClaim": "claim",
+        "RegisterSourceArtifact": "source_artifact",
+        "AddSourceFragment": "source_fragment",
+        "CreateEvidenceItem": "evidence_item",
+        "CreateEvidenceDependencyGroup": "dependency_group",
+        "CreateArgument": "argument",
+        "CreateAssessment": "assessment",
+        "CreateQuestion": "question",
+    }
+    reference_type = reference_types.get(command_type)
+    reference_id = payload.get("id")
+    if reference_type is None or reference_id is None:
+        return None
+    return reference_type, str(reference_id)
+
+
+def _reference_namespace_and_status(
+    session: Session, reference_type: str, reference_id: str
+) -> tuple[str, str | None] | None:
+    if reference_type == "actor":
+        actor = session.get(Actor, reference_id)
+        return None if actor is None else (actor.namespace_id, None)
+    if reference_type == "claim":
+        claim = session.get(Claim, reference_id)
+        return None if claim is None else (claim.namespace_id, claim.status)
+    if reference_type == "source_artifact":
+        source = session.get(SourceArtifact, reference_id)
+        return None if source is None else (source.namespace_id, source.status)
+    if reference_type == "evidence_item":
+        evidence = session.get(EvidenceItem, reference_id)
+        return None if evidence is None else (evidence.namespace_id, evidence.status)
+    if reference_type == "dependency_group":
+        group = session.get(EvidenceDependencyGroup, reference_id)
+        return None if group is None else (group.namespace_id, group.status)
+    if reference_type == "assessment_policy":
+        policy = session.get(AssessmentPolicy, reference_id)
+        return None if policy is None else (policy.namespace_id, policy.status)
+    if reference_type == "argument":
+        argument = session.get(Argument, reference_id)
+        return None if argument is None else (argument.namespace_id, argument.status)
+    if reference_type == "challenge":
+        challenge = session.get(Challenge, reference_id)
+        return None if challenge is None else (challenge.namespace_id, challenge.status)
+    if reference_type == "question":
+        question = session.get(Question, reference_id)
+        return None if question is None else (question.namespace_id, question.status)
+    if reference_type == "source_fragment":
+        result = session.execute(
+            select(SourceArtifact.namespace_id, SourceFragment.status)
+            .join(SourceFragment, SourceFragment.source_artifact_id == SourceArtifact.id)
+            .where(SourceFragment.id == reference_id)
+        ).one_or_none()
+    elif reference_type == "evidence_link":
+        result = session.execute(
+            select(Claim.namespace_id, EvidenceLink.status)
+            .join(EvidenceLink, EvidenceLink.claim_id == Claim.id)
+            .where(EvidenceLink.id == reference_id)
+        ).one_or_none()
+    elif reference_type == "assessment":
+        result = session.execute(
+            select(Claim.namespace_id, EpistemicAssessment.status)
+            .join(EpistemicAssessment, EpistemicAssessment.claim_id == Claim.id)
+            .where(EpistemicAssessment.id == reference_id)
+        ).one_or_none()
+    elif reference_type == "claim_relation":
+        result = session.execute(
+            select(Claim.namespace_id, ClaimRelation.status)
+            .join(ClaimRelation, ClaimRelation.source_claim_id == Claim.id)
+            .where(ClaimRelation.id == reference_id)
+        ).one_or_none()
+    else:
+        raise DomainError(
+            "reference.type_not_allowed", f"Unsupported reference type {reference_type!r}"
+        )
+    if result is None:
+        return None
+    return str(result[0]), str(result[1])
+
+
+def _require_reference(
+    session: Session,
+    namespace_id: str,
+    reference_type: str,
+    reference_id: Any,
+    candidates: CandidateReferences,
+) -> None:
+    normalized_id = str(reference_id)
+    if (reference_type, normalized_id) in candidates:
+        return
+    resolved = _reference_namespace_and_status(session, reference_type, normalized_id)
+    if resolved is None:
+        raise DomainError(
+            "reference.not_found",
+            f"Referenced {reference_type} {normalized_id} does not exist",
+        )
+    referenced_namespace, status = resolved
+    if referenced_namespace != namespace_id:
+        raise DomainError(
+            "reference.namespace_mismatch",
+            f"Referenced {reference_type} does not belong to the proposal namespace",
+        )
+    if status is not None and status != "accepted":
+        raise DomainError(
+            "reference.not_accepted",
+            f"Referenced {reference_type} must be accepted",
+        )
+
+
+def _require_source_provenance(
+    session: Session,
+    namespace_id: str,
+    fragment_id: Any,
+    candidates: CandidateReferences,
+) -> None:
+    normalized_id = str(fragment_id)
+    candidate = candidates.get(("source_fragment", normalized_id))
+    if candidate is not None:
+        if not candidate.get("locator_json") or not str(candidate.get("license_basis", "")).strip():
+            raise DomainError(
+                "evidence.incomplete_source_provenance",
+                "Evidence fragments require a locator and license basis",
+            )
+        if candidate.get("stored_text") is not None and not candidate.get("text_hash"):
+            raise DomainError(
+                "evidence.incomplete_source_provenance",
+                "Stored fragment text requires a text hash",
+            )
+        _require_reference(
+            session,
+            namespace_id,
+            "source_artifact",
+            candidate["source_artifact_id"],
+            candidates,
+        )
+        return
+    _require_reference(session, namespace_id, "source_fragment", normalized_id, candidates)
+    row = session.execute(
+        select(SourceFragment, SourceArtifact)
+        .join(SourceArtifact, SourceArtifact.id == SourceFragment.source_artifact_id)
+        .where(SourceFragment.id == normalized_id)
+    ).one()
+    fragment, source = row
+    if (
+        not fragment.locator_json
+        or not str(fragment.license_basis).strip()
+        or (fragment.stored_text is not None and not fragment.text_hash)
+        or not str(source.title).strip()
+        or not str(source.canonical_uri).strip()
+        or not str(source.license_basis).strip()
+    ):
+        raise DomainError(
+            "evidence.incomplete_source_provenance",
+            "Evidence fragments require complete source metadata, locator, hash, and license basis",
+        )
+
+
+def _require_evidence_provenance(
+    session: Session,
+    namespace_id: str,
+    evidence_item_id: Any,
+    candidates: CandidateReferences,
+) -> None:
+    normalized_id = str(evidence_item_id)
+    candidate = candidates.get(("evidence_item", normalized_id))
+    if candidate is not None:
+        if candidate["kind"] == "source_fragment":
+            for fragment_id in candidate.get("source_fragment_ids", []):
+                _require_source_provenance(session, namespace_id, fragment_id, candidates)
+        else:
+            _require_reference(
+                session,
+                namespace_id,
+                "argument",
+                candidate.get("argument_id"),
+                candidates,
+            )
+        return
+    _require_reference(session, namespace_id, "evidence_item", normalized_id, candidates)
+    evidence = session.get(EvidenceItem, normalized_id)
+    assert evidence is not None
+    if evidence.kind == "source_fragment":
+        fragment_ids = session.scalars(
+            select(EvidenceItemSource.source_fragment_id).where(
+                EvidenceItemSource.evidence_item_id == evidence.id,
+                EvidenceItemSource.status == "accepted",
+            )
+        ).all()
+        if not fragment_ids:
+            raise DomainError(
+                "evidence.unresolvable_provenance",
+                "Source-fragment evidence has no accepted fragments",
+            )
+        for fragment_id in fragment_ids:
+            _require_source_provenance(session, namespace_id, fragment_id, candidates)
+    elif evidence.kind == "argument" and evidence.argument_id is not None:
+        _require_reference(session, namespace_id, "argument", evidence.argument_id, candidates)
+        premise_count = session.scalar(
+            select(func.count())
+            .select_from(ArgumentPremise)
+            .where(
+                ArgumentPremise.argument_id == evidence.argument_id,
+                ArgumentPremise.status == "accepted",
+            )
+        )
+        if not premise_count:
+            raise DomainError(
+                "evidence.unresolvable_provenance",
+                "Argument evidence requires an accepted argument with premises",
+            )
+    else:
+        raise DomainError(
+            "evidence.unresolvable_provenance",
+            "Evidence item content does not match its kind",
+        )
+
+
+def _require_assessment_for_claim(
+    session: Session,
+    namespace_id: str,
+    assessment_id: Any,
+    claim_id: Any,
+    candidates: CandidateReferences,
+) -> None:
+    _require_reference(session, namespace_id, "assessment", assessment_id, candidates)
+    candidate = candidates.get(("assessment", str(assessment_id)))
+    assessment_claim_id = (
+        str(candidate["claim_id"])
+        if candidate is not None
+        else session.scalar(
+            select(EpistemicAssessment.claim_id).where(EpistemicAssessment.id == str(assessment_id))
+        )
+    )
+    if assessment_claim_id != str(claim_id):
+        raise DomainError(
+            "revision.claim_mismatch",
+            "Assessment supersession and revisions must stay on one claim",
+        )
+
+
+def _validate_command_references(
+    session: Session,
+    proposal: Proposal,
+    item: ProposalItem,
+    candidates: CandidateReferences,
+) -> None:
+    payload = item.payload_json
+    namespace_id = proposal.namespace_id
+
+    def require(reference_type: str, value: Any) -> None:
+        _require_reference(session, namespace_id, reference_type, value, candidates)
+
+    if item.preconditions_json.get("claim_id") is not None:
+        require("claim", item.preconditions_json["claim_id"])
+    if item.preconditions_json.get("source_artifact_id") is not None:
+        require("source_artifact", item.preconditions_json["source_artifact_id"])
+
+    command = item.command_type
+    if command == "AddClaimVersion":
+        require("claim", payload["claim_id"])
+    elif command == "AddSourceFragment":
+        require("source_artifact", payload["source_artifact_id"])
+    elif command == "CreateEvidenceItem":
+        if payload["kind"] == "source_fragment":
+            for fragment_id in payload.get("source_fragment_ids", []):
+                _require_source_provenance(session, namespace_id, fragment_id, candidates)
+        else:
+            require("argument", payload["argument_id"])
+    elif command == "AddEvidenceDependencyMember":
+        require("dependency_group", payload["dependency_group_id"])
+        require("evidence_item", payload["evidence_item_id"])
+    elif command == "LinkEvidenceToClaim":
+        require("claim", payload["claim_id"])
+        _require_evidence_provenance(session, namespace_id, payload["evidence_item_id"], candidates)
+        require("actor", payload["evaluator_actor_id"])
+        require("assessment_policy", payload["assessment_policy_id"])
+        if payload.get("dependency_group_id") is not None:
+            require("dependency_group", payload["dependency_group_id"])
+    elif command == "RelateClaims":
+        require("claim", payload["source_claim_id"])
+        require("claim", payload["target_claim_id"])
+    elif command == "AddAssertion":
+        require("claim", payload["claim_id"])
+        require("actor", payload["actor_id"])
+        if payload.get("source_fragment_id") is not None:
+            _require_source_provenance(
+                session, namespace_id, payload["source_fragment_id"], candidates
+            )
+    elif command == "CreateArgument":
+        require("claim", payload["conclusion_claim_id"])
+        require("actor", payload["author_actor_id"])
+        premise_type = payload.get("premise_type", "claim")
+        if premise_type not in {"claim", "evidence_item"}:
+            raise DomainError(
+                "argument.invalid_premise_type",
+                "Argument premises must be claims or evidence items",
+            )
+        for premise_id in payload["premise_ids"]:
+            require(premise_type, premise_id)
+    elif command == "RaiseChallenge":
+        target_types = {
+            "claim",
+            "source_artifact",
+            "source_fragment",
+            "evidence_item",
+            "evidence_link",
+            "argument",
+            "assessment",
+            "claim_relation",
+            "question",
+        }
+        target_type = str(payload["target_type"])
+        if target_type not in target_types:
+            raise DomainError(
+                "challenge.invalid_target_type", "Challenge target type is not supported in M1"
+            )
+        require(target_type, payload["target_id"])
+        require("actor", payload["raised_by_actor_id"])
+    elif command == "CreateAssessment":
+        require("claim", payload["claim_id"])
+        require("actor", payload["assessor_actor_id"])
+        require("assessment_policy", payload["policy_id"])
+        input_type = payload.get("input_type", "evidence_link")
+        if input_type not in {"evidence_link", "argument", "challenge"}:
+            raise DomainError(
+                "assessment.invalid_input_type",
+                "Assessment inputs must be evidence links, arguments, or challenges",
+            )
+        for input_id in payload["input_ids"]:
+            require(input_type, input_id)
+        if payload.get("supersedes_id") is not None:
+            _require_assessment_for_claim(
+                session,
+                namespace_id,
+                payload["supersedes_id"],
+                payload["claim_id"],
+                candidates,
+            )
+    elif command == "CreateRevisionEvent":
+        require("claim", payload["claim_id"])
+        if payload.get("before_assessment_id") is not None:
+            _require_assessment_for_claim(
+                session,
+                namespace_id,
+                payload["before_assessment_id"],
+                payload["claim_id"],
+                candidates,
+            )
+        _require_assessment_for_claim(
+            session,
+            namespace_id,
+            payload["after_assessment_id"],
+            payload["claim_id"],
+            candidates,
+        )
+        after_candidate = candidates.get(("assessment", str(payload["after_assessment_id"])))
+        after_supersedes_id = (
+            after_candidate.get("supersedes_id")
+            if after_candidate is not None
+            else session.scalar(
+                select(EpistemicAssessment.supersedes_id).where(
+                    EpistemicAssessment.id == str(payload["after_assessment_id"])
+                )
+            )
+        )
+        if str(after_supersedes_id or "") != str(payload.get("before_assessment_id") or ""):
+            raise DomainError(
+                "revision.chain_mismatch",
+                "Revision before/after assessments must match the supersession chain",
+            )
+        if payload.get("author_actor_id") is not None:
+            require("actor", payload["author_actor_id"])
+
+
+def _validate_actor_namespace(
+    session: Session, namespace_id: str, actor_id: str, code: str
+) -> None:
+    actor = session.get(Actor, actor_id)
+    if actor is None:
+        raise DomainError("reference.not_found", "Referenced actor does not exist")
+    if actor.namespace_id != namespace_id:
+        raise DomainError(code, "Actor does not belong to the proposal namespace")
+
+
 def validate_proposal(session: Session, proposal_id: str) -> Proposal:
     proposal = session.get(Proposal, proposal_id)
     if proposal is None:
@@ -261,13 +669,33 @@ def validate_proposal(session: Session, proposal_id: str) -> Proposal:
     ).all()
     if not items:
         raise DomainError("proposal.items_required", "A proposal must contain at least one item")
+    _validate_actor_namespace(
+        session,
+        proposal.namespace_id,
+        proposal.proposer_actor_id,
+        "proposal.proposer_namespace_mismatch",
+    )
     all_valid = True
+    candidates: CandidateReferences = {}
     for item in items:
         try:
             validate_command(item.command_type, item.payload_json)
             _validate_precondition_shape(item.preconditions_json)
+            _validate_command_references(session, proposal, item, candidates)
             item.status = "valid"
             item.validation_errors_json = []
+            candidate = _candidate_reference(item.command_type, item.payload_json)
+            if candidate is not None:
+                if (
+                    candidate in candidates
+                    or _reference_namespace_and_status(session, candidate[0], candidate[1])
+                    is not None
+                ):
+                    raise DomainError(
+                        "reference.identity_conflict",
+                        f"Candidate {candidate[0]} identity already exists",
+                    )
+                candidates[candidate] = item.payload_json
         except (DomainError, ValueError) as error:
             all_valid = False
             item.status = "invalid"
@@ -309,6 +737,18 @@ def add_review(
         raise DomainError(
             "review.separation_of_duty", "A proposer cannot review their own proposal"
         )
+    _validate_actor_namespace(
+        session,
+        proposal.namespace_id,
+        reviewer_actor_id,
+        "review.reviewer_namespace_mismatch",
+    )
+    try:
+        ReviewDecisionKind(decision)
+    except ValueError as error:
+        raise DomainError("review.invalid_decision", "Unknown review decision") from error
+    if not rationale.strip():
+        raise DomainError("review.rationale_required", "A review rationale is required")
     review = ReviewDecision(
         proposal_item_id=item.id,
         reviewer_actor_id=reviewer_actor_id,
@@ -320,20 +760,29 @@ def add_review(
     return review
 
 
-def _latest_decision(session: Session, item_id: str) -> ReviewDecision | None:
-    return session.scalar(
-        select(ReviewDecision)
-        .where(ReviewDecision.proposal_item_id == item_id)
-        .order_by(ReviewDecision.recorded_at.desc(), ReviewDecision.id.desc())
-        .limit(1)
+def _effective_decision(
+    session: Session, item_id: str
+) -> tuple[ReviewDecisionKind | None, list[ReviewDecision]]:
+    decisions = list(
+        session.scalars(
+            select(ReviewDecision)
+            .where(ReviewDecision.proposal_item_id == item_id)
+            .order_by(ReviewDecision.recorded_at, ReviewDecision.id)
+        )
     )
+    outcome = review_outcome(tuple(ReviewDecisionKind(decision.decision) for decision in decisions))
+    return outcome, decisions
+
+
+def effective_review_outcome(session: Session, item_id: str) -> str | None:
+    """Return the shared conservative domain outcome for a proposal item."""
+    outcome, _ = _effective_decision(session, item_id)
+    return None if outcome is None else outcome.value
 
 
 def apply_proposal(session: Session, proposal_id: str, applied_by_actor_id: str) -> Proposal:
     """Apply all review-accepted items atomically and idempotently."""
     try:
-        if session.bind is not None and session.bind.dialect.name == "postgresql":
-            session.execute(text("SET LOCAL noemosyne.accepting_proposal = 'on'"))
         proposal = session.scalar(
             select(Proposal).where(Proposal.id == proposal_id).with_for_update()
         )
@@ -348,6 +797,18 @@ def apply_proposal(session: Session, proposal_id: str, applied_by_actor_id: str)
         )
         if namespace is None:
             raise NotFoundError("namespace.not_found", "Namespace not found")
+        _validate_actor_namespace(
+            session,
+            proposal.namespace_id,
+            proposal.proposer_actor_id,
+            "proposal.proposer_namespace_mismatch",
+        )
+        _validate_actor_namespace(
+            session,
+            proposal.namespace_id,
+            applied_by_actor_id,
+            "proposal.applier_namespace_mismatch",
+        )
         if namespace.revision_token != proposal.base_revision_token:
             proposal.status = "stale"
             raise ConflictError(
@@ -359,17 +820,30 @@ def apply_proposal(session: Session, proposal_id: str, applied_by_actor_id: str)
             .order_by(ProposalItem.position)
             .with_for_update()
         ).all()
-        accepted: list[tuple[ProposalItem, ReviewDecision]] = []
+        accepted: list[tuple[ProposalItem, str]] = []
         for item in items:
-            decision = _latest_decision(session, item.id)
-            if decision is None:
-                raise DomainError("review.required", "Every proposal item needs a review decision")
-            if decision.reviewer_actor_id == proposal.proposer_actor_id:
-                raise DomainError(
-                    "review.separation_of_duty", "A proposer cannot accept their own item"
+            outcome, decisions = _effective_decision(session, item.id)
+            for decision in decisions:
+                if decision.reviewer_actor_id == proposal.proposer_actor_id:
+                    raise DomainError(
+                        "review.separation_of_duty", "A proposer cannot review their own item"
+                    )
+                _validate_actor_namespace(
+                    session,
+                    proposal.namespace_id,
+                    decision.reviewer_actor_id,
+                    "review.reviewer_namespace_mismatch",
                 )
-            if decision.decision == "accept":
-                accepted.append((item, decision))
+            if outcome is None:
+                raise DomainError(
+                    "review.substantive_decision_required",
+                    "Every proposal item needs an accept, reject, or request-changes decision",
+                )
+            if outcome is ReviewDecisionKind.ACCEPT:
+                accepting_review = next(
+                    decision for decision in decisions if decision.decision == "accept"
+                )
+                accepted.append((item, accepting_review.reviewer_actor_id))
             else:
                 item.status = "rejected"
         if not accepted:
@@ -378,14 +852,15 @@ def apply_proposal(session: Session, proposal_id: str, applied_by_actor_id: str)
             proposal.applied_by_actor_id = applied_by_actor_id
             session.commit()
             return proposal
-        for item, decision in accepted:
+        for item, reviewer_actor_id in accepted:
             validate_command(item.command_type, item.payload_json)
+            _validate_command_references(session, proposal, item, {})
             _verify_preconditions(session, item)
             created_ids = _execute_command(
                 session,
                 proposal,
                 item,
-                decision.reviewer_actor_id,
+                reviewer_actor_id,
             )
             item.created_canonical_ids_json = created_ids
             item.status = "accepted"
@@ -478,11 +953,26 @@ def _execute_command(
             wording=payload["wording"],
             scope_json=payload["scope_json"],
             valid_from=_parse_time(payload["valid_from"], "valid_from"),
+            supersedes_id=existing_claim.current_version_id,
             **provenance,
         )
         session.add(version)
         session.flush()
-        existing_claim.current_version_id = version.id
+        if session.bind is not None and session.bind.dialect.name == "postgresql":
+            session.execute(
+                text(
+                    "SELECT noemosyne_advance_claim_version"
+                    "(:claim_id, :version_id, :proposal_item_id)"
+                ),
+                {
+                    "claim_id": existing_claim.id,
+                    "version_id": version.id,
+                    "proposal_item_id": item.id,
+                },
+            )
+            session.expire(existing_claim, ["current_version_id"])
+        else:
+            existing_claim.current_version_id = version.id
         return [version.id]
     if item.command_type == "RegisterSourceArtifact":
         source = SourceArtifact(
@@ -635,6 +1125,20 @@ def _execute_command(
         session.flush()
         return [challenge.id]
     if item.command_type == "CreateAssessment":
+        supersedes_id = payload.get("supersedes_id")
+        if supersedes_id is None:
+            supersedes_id = session.scalar(
+                select(EpistemicAssessment.id)
+                .where(
+                    EpistemicAssessment.claim_id == payload["claim_id"],
+                    EpistemicAssessment.status == "accepted",
+                )
+                .order_by(
+                    EpistemicAssessment.recorded_at.desc(),
+                    EpistemicAssessment.id.desc(),
+                )
+                .limit(1)
+            )
         assessment = EpistemicAssessment(
             claim_id=payload["claim_id"],
             assessor_actor_id=payload["assessor_actor_id"],
@@ -649,6 +1153,7 @@ def _execute_command(
             rationale=payload["rationale"],
             uncertainty_drivers_json=payload.get("uncertainty_drivers", []),
             valid_from=_parse_time(payload["valid_from"], "valid_from"),
+            supersedes_id=supersedes_id,
             **provenance,
         )
         session.add(assessment)
@@ -663,7 +1168,19 @@ def _execute_command(
                     **provenance,
                 )
             )
-        return [assessment.id]
+        revision = RevisionEvent(
+            claim_id=assessment.claim_id,
+            before_assessment_id=supersedes_id,
+            after_assessment_id=assessment.id,
+            author_actor_id=assessment.assessor_actor_id,
+            reviewer_actor_id=reviewer_actor_id,
+            rationale=payload.get("revision_rationale", payload["rationale"]),
+            triggering_inputs_json=payload["input_ids"],
+            **provenance,
+        )
+        session.add(revision)
+        session.flush()
+        return [assessment.id, revision.id]
     if item.command_type == "CreateRevisionEvent":
         revision = RevisionEvent(
             claim_id=payload["claim_id"],

@@ -1,7 +1,9 @@
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { request as api } from "@/lib/generated-api/client";
+import type { components } from "@/lib/generated-api/schema";
 
-type SearchResult = { claim_id: string; wording: string; scope: Record<string, unknown> };
+type SearchResponse = components["schemas"]["SearchResponse"];
+type SearchResult = components["schemas"]["SearchResultResponse"];
 
 export default async function Claims({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const params = await searchParams;
@@ -9,7 +11,7 @@ export default async function Claims({ searchParams }: { searchParams: Promise<R
   const namespace = params.namespace ?? "";
   let results: SearchResult[] = [];
   if (query && namespace) {
-    const data = await api<{ results: SearchResult[] }>("/v1/claims:search", {
+    const data = await api<SearchResponse>("/v1/claims:search", {
       method: "POST",
       body: JSON.stringify({ namespace_id: namespace, query, limit: 50, verdicts: [] }),
     });

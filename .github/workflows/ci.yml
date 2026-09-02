@@ -46,6 +46,48 @@ jobs:
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: noemosyne-web:latest
+          scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+      - name: Scan API runtime
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: noemosyne-api:latest
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: make bootstrap
+      - name: Start fresh stack and import deterministic seed
+        run: |
+          docker compose up -d --build
+          curl --fail --retry 30 --retry-delay 2 --retry-all-errors http://localhost:8000/v1/health/ready
+          docker compose exec -T api noemosyne-seed import examples/ai-research/seed.yaml
+      - name: Install browser
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run complete browser workflow
+        run: pnpm e2e
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Stop stack
+        if: always()
+        run: docker compose down --volumes

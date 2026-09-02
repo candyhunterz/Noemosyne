@@ -157,6 +157,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/namespaces/{namespace_id}/actors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Namespace Actors */
+        get: operations["list_namespace_actors_v1_namespaces__namespace_id__actors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/proposals": {
         parameters: {
             query?: never;
@@ -298,10 +315,309 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ActivityEventResponse */
+        ActivityEventResponse: {
+            /** Actor Id */
+            actor_id: string;
+            /** Detail */
+            detail: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Event Type */
+            event_type: string;
+            /** Id */
+            id: string;
+            /** Object Id */
+            object_id: string;
+            /** Object Type */
+            object_type: string;
+            /** Proposal Id */
+            proposal_id: string | null;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+        };
+        /** ActivityResponse */
+        ActivityResponse: {
+            /** Events */
+            events: components["schemas"]["ActivityEventResponse"][];
+        };
+        /** ActorListResponse */
+        ActorListResponse: {
+            /** Actors */
+            actors: components["schemas"]["ActorResponse"][];
+        };
+        /** ActorResponse */
+        ActorResponse: {
+            /** Display Name */
+            display_name: string;
+            /** External Id */
+            external_id: string | null;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Namespace Id */
+            namespace_id: string;
+            /** Provenance */
+            provenance: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+        };
         /** ApplyRequest */
         ApplyRequest: {
             /** Applied By Actor Id */
             applied_by_actor_id: string;
+        };
+        /** ArgumentPremiseResponse */
+        ArgumentPremiseResponse: {
+            /** Id */
+            id: string;
+            /** Position */
+            position: number;
+            /** Type */
+            type: string;
+        };
+        /** ArgumentProvenanceResponse */
+        ArgumentProvenanceResponse: {
+            /** Author Actor Id */
+            author_actor_id: string;
+            /** Conclusion Claim Id */
+            conclusion_claim_id: string;
+            /** Id */
+            id: string;
+            /** Inference Scheme */
+            inference_scheme: string;
+            /** Premises */
+            premises: components["schemas"]["ArgumentPremiseResponse"][];
+            /** Rationale */
+            rationale: string;
+        };
+        /** AssessmentProfileResponse */
+        AssessmentProfileResponse: {
+            /** Consistency */
+            consistency: string;
+            /** Directness */
+            directness: string;
+            /** Independence */
+            independence: string;
+            /** Methodological Quality */
+            methodological_quality: string;
+            /** Scope Fit */
+            scope_fit: string;
+            /** Stability */
+            stability: string;
+        };
+        /** AssessmentResponse */
+        AssessmentResponse: {
+            /** Assessor Actor Id */
+            assessor_actor_id: string;
+            /** Id */
+            id: string;
+            /** Input Ids */
+            input_ids: string[];
+            policy: components["schemas"]["PolicyResponse"] | null;
+            profile: components["schemas"]["AssessmentProfileResponse"];
+            /** Rationale */
+            rationale: string;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+            /** Uncertainty Drivers */
+            uncertainty_drivers: components["schemas"]["JsonValue"][];
+            /** Verdict */
+            verdict: string;
+        };
+        /** AssessmentTimelineResponse */
+        AssessmentTimelineResponse: {
+            /** Id */
+            id: string;
+            /** Rationale */
+            rationale: string;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+            /** Supersedes Id */
+            supersedes_id: string | null;
+            /**
+             * Valid From
+             * Format: date-time
+             */
+            valid_from: string;
+            /** Verdict */
+            verdict: string;
+        };
+        /** ChallengeResponse */
+        ChallengeResponse: {
+            /** Category */
+            category: string;
+            /** Explanation */
+            explanation: string;
+            /** Id */
+            id: string;
+            /** Raised By Actor Id */
+            raised_by_actor_id: string;
+        };
+        /** ClaimHistoryResponse */
+        ClaimHistoryResponse: {
+            /** Claim Id */
+            claim_id: string;
+            comparison: components["schemas"]["HistoryComparisonResponse"] | null;
+            /** Revisions */
+            revisions: components["schemas"]["RevisionResponse"][];
+            /** Timeline */
+            timeline: components["schemas"]["AssessmentTimelineResponse"][];
+        };
+        /** ClaimResponse */
+        ClaimResponse: {
+            /** Claim Form */
+            claim_form: string;
+            current_version: components["schemas"]["ClaimVersionResponse"];
+            /** Id */
+            id: string;
+            /** Namespace Id */
+            namespace_id: string;
+            /** Status */
+            status: string;
+        };
+        /** ClaimVersionResponse */
+        ClaimVersionResponse: {
+            /** Id */
+            id: string;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+            /** Scope */
+            scope: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Supersedes Id */
+            supersedes_id?: string | null;
+            /**
+             * Valid From
+             * Format: date-time
+             */
+            valid_from: string;
+            /** Version Number */
+            version_number: number;
+            /** Wording */
+            wording: string;
+        };
+        /** ContextBundleResponse */
+        ContextBundleResponse: {
+            assessment: components["schemas"]["AssessmentResponse"] | null;
+            claim: components["schemas"]["ContextClaimResponse"] | null;
+            /** Evidence Groups */
+            evidence_groups: components["schemas"]["EvidenceGroupResponse"][];
+            history_summary: components["schemas"]["HistorySummaryResponse"] | null;
+            /** Omissions */
+            omissions: {
+                [key: string]: number;
+            };
+            /** Open Challenges */
+            open_challenges: components["schemas"]["ChallengeResponse"][];
+            query: components["schemas"]["ContextQueryResponse"];
+        };
+        /** ContextClaimResponse */
+        ContextClaimResponse: {
+            /** Id */
+            id: string;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+            /** Scope */
+            scope: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /**
+             * Valid From
+             * Format: date-time
+             */
+            valid_from: string;
+            /** Version Id */
+            version_id: string;
+            /** Wording */
+            wording: string;
+        };
+        /** ContextEvidenceItemResponse */
+        ContextEvidenceItemResponse: {
+            argument: components["schemas"]["ArgumentProvenanceResponse"] | null;
+            /** Assessment Policy Id */
+            assessment_policy_id: string;
+            /** Caveats */
+            caveats: components["schemas"]["JsonValue"][];
+            /** Directness */
+            directness: string;
+            /** Evaluator Actor Id */
+            evaluator_actor_id: string;
+            /** Evidence Item Id */
+            evidence_item_id: string;
+            /** Evidence Link Id */
+            evidence_link_id: string;
+            /** Scope Match */
+            scope_match: string;
+            /** Sources */
+            sources: components["schemas"]["SourceProvenanceResponse"][];
+            /** Stance */
+            stance: string;
+            /** Strength Band */
+            strength_band: string;
+        };
+        /** ContextQueryResponse */
+        ContextQueryResponse: {
+            /**
+             * Domain Time
+             * Format: date-time
+             */
+            domain_time: string;
+            /**
+             * Knowledge Cutoff
+             * Format: date-time
+             */
+            knowledge_cutoff: string;
+        };
+        /** DependencyGroupResponse */
+        DependencyGroupResponse: {
+            /** Dependency Type */
+            dependency_type: string;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+        };
+        /** EvidenceGroupResponse */
+        EvidenceGroupResponse: {
+            dependency_group: components["schemas"]["DependencyGroupResponse"] | null;
+            /** Items */
+            items: components["schemas"]["ContextEvidenceItemResponse"][];
+        };
+        /** GraphEdgeResponse */
+        GraphEdgeResponse: {
+            /** Depth */
+            depth: number;
+            /** Id */
+            id: string;
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+            /** Type */
+            type: string;
         };
         /** GraphTraceRequest */
         GraphTraceRequest: {
@@ -320,10 +636,75 @@ export interface components {
             /** Start Claim Id */
             start_claim_id: string;
         };
-        /** HTTPValidationError */
-        HTTPValidationError: {
+        /** GraphTraceResponse */
+        GraphTraceResponse: {
+            /** Edges */
+            edges: components["schemas"]["GraphEdgeResponse"][];
+            /** Nodes */
+            nodes: string[];
+            /** Truncated */
+            truncated: boolean;
+        };
+        /** HealthResponse */
+        HealthResponse: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "ready";
+        };
+        /** HistoryComparisonResponse */
+        HistoryComparisonResponse: {
+            from: components["schemas"]["AssessmentTimelineResponse"];
+            to: components["schemas"]["AssessmentTimelineResponse"];
+        };
+        /** HistorySummaryResponse */
+        HistorySummaryResponse: {
+            /** Assessment Count */
+            assessment_count: number;
+            /** Verdict Sequence */
+            verdict_sequence: string[];
+        };
+        JsonValue: unknown;
+        /** NamespaceResponse */
+        NamespaceResponse: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+            /** Revision Token */
+            revision_token: number;
+            /** Slug */
+            slug: string;
+        };
+        /** PolicyResponse */
+        PolicyResponse: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Version */
+            version: string;
+        };
+        /** ProblemDetail */
+        ProblemDetail: {
+            /** Code */
+            code: string;
             /** Detail */
-            detail?: components["schemas"]["ValidationError"][];
+            detail: string;
+            /** Instance */
+            instance?: string | null;
+            /** Status */
+            status: number;
+            /** Title */
+            title: string;
+            /** Type */
+            type: string;
         };
         /** ProposalCreate */
         ProposalCreate: {
@@ -343,16 +724,81 @@ export interface components {
         };
         /** ProposalItemCreate */
         ProposalItemCreate: {
-            /** Command Type */
-            command_type: string;
+            /**
+             * Command Type
+             * @enum {string}
+             */
+            command_type: "CreateClaim" | "AddClaimVersion" | "RegisterSourceArtifact" | "AddSourceFragment" | "CreateEvidenceItem" | "CreateEvidenceDependencyGroup" | "AddEvidenceDependencyMember" | "LinkEvidenceToClaim" | "RelateClaims" | "AddAssertion" | "CreateArgument" | "RaiseChallenge" | "CreateAssessment" | "CreateRevisionEvent" | "CreateQuestion";
             /** Payload */
             payload: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Preconditions */
             preconditions?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
+        };
+        /** ProposalItemResponse */
+        ProposalItemResponse: {
+            /** Command Type */
+            command_type: ("CreateClaim" | "AddClaimVersion" | "RegisterSourceArtifact" | "AddSourceFragment" | "CreateEvidenceItem" | "CreateEvidenceDependencyGroup" | "AddEvidenceDependencyMember" | "LinkEvidenceToClaim" | "RelateClaims" | "AddAssertion" | "CreateArgument" | "RaiseChallenge" | "CreateAssessment" | "CreateRevisionEvent" | "CreateQuestion") | "ImportSeedPackage";
+            /** Created Canonical Ids */
+            created_canonical_ids: string[];
+            /** Effective Outcome */
+            effective_outcome: ("accept" | "reject" | "request_changes" | "abstain") | null;
+            /** Id */
+            id: string;
+            /** Payload */
+            payload: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Position */
+            position: number;
+            /** Preconditions */
+            preconditions: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Reviews */
+            reviews: components["schemas"]["ReviewResponse"][];
+            /** Status */
+            status: string;
+            /** Validation Errors */
+            validation_errors: components["schemas"]["ValidationErrorResponse"][];
+        };
+        /** ProposalListResponse */
+        ProposalListResponse: {
+            /** Proposals */
+            proposals: components["schemas"]["ProposalResponse"][];
+        };
+        /** ProposalResponse */
+        ProposalResponse: {
+            /** Applied At */
+            applied_at: string | null;
+            /** Applied By Actor Id */
+            applied_by_actor_id: string | null;
+            /** Base Revision Token */
+            base_revision_token: number;
+            /** Description */
+            description: string;
+            /** Id */
+            id: string;
+            /** Items */
+            items: components["schemas"]["ProposalItemResponse"][];
+            /** Namespace Id */
+            namespace_id: string;
+            /** Proposer Actor Id */
+            proposer_actor_id: string;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+            /** Status */
+            status: string;
+            /** Submitted At */
+            submitted_at: string | null;
+            /** Title */
+            title: string;
         };
         /** ReviewCreate */
         ReviewCreate: {
@@ -368,6 +814,41 @@ export interface components {
             /** Reviewer Actor Id */
             reviewer_actor_id: string;
         };
+        /** ReviewResponse */
+        ReviewResponse: {
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "accept" | "reject" | "request_changes" | "abstain";
+            /** Id */
+            id: string;
+            /** Rationale */
+            rationale: string;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+            /** Reviewer Actor Id */
+            reviewer_actor_id: string;
+        };
+        /** RevisionResponse */
+        RevisionResponse: {
+            /** After Assessment Id */
+            after_assessment_id: string;
+            /** Before Assessment Id */
+            before_assessment_id: string | null;
+            /** Id */
+            id: string;
+            /** Rationale */
+            rationale: string;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+        };
         /** SearchRequest */
         SearchRequest: {
             /**
@@ -382,18 +863,91 @@ export interface components {
             /** Verdicts */
             verdicts?: string[];
         };
-        /** ValidationError */
-        ValidationError: {
-            /** Context */
-            ctx?: Record<string, never>;
-            /** Input */
-            input?: unknown;
-            /** Location */
-            loc: (string | number)[];
-            /** Message */
-            msg: string;
-            /** Error Type */
-            type: string;
+        /** SearchResponse */
+        SearchResponse: {
+            /** Query */
+            query: string;
+            /** Results */
+            results: components["schemas"]["SearchResultResponse"][];
+        };
+        /** SearchResultResponse */
+        SearchResultResponse: {
+            /** Claim Id */
+            claim_id: string;
+            /** Scope */
+            scope: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            scores: components["schemas"]["SearchScoresResponse"];
+            /** Wording */
+            wording: string;
+        };
+        /** SearchScoresResponse */
+        SearchScoresResponse: {
+            /** Lexical */
+            lexical: number | null;
+            /** Semantic */
+            semantic: number | null;
+            /** Substring */
+            substring: number;
+        };
+        /** SourceFragmentResponse */
+        SourceFragmentResponse: {
+            /** Id */
+            id: string;
+            /** License Basis */
+            license_basis: string;
+            /** Locator */
+            locator: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Text Hash */
+            text_hash: string | null;
+        };
+        /** SourceProvenanceResponse */
+        SourceProvenanceResponse: {
+            /** Fragment Id */
+            fragment_id: string;
+            /** License Basis */
+            license_basis: string;
+            /** Locator */
+            locator: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Source Id */
+            source_id: string;
+            /** Title */
+            title: string;
+            /** Uri */
+            uri: string;
+        };
+        /** SourceResponse */
+        SourceResponse: {
+            /** Access */
+            access: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Authors */
+            authors: components["schemas"]["JsonValue"][];
+            /** Canonical Uri */
+            canonical_uri: string;
+            /** Fragments */
+            fragments: components["schemas"]["SourceFragmentResponse"][];
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** License Basis */
+            license_basis: string;
+            /** Title */
+            title: string;
+        };
+        /** ValidationErrorResponse */
+        ValidationErrorResponse: {
+            /** Code */
+            code: string;
+            /** Detail */
+            detail: string;
         };
     };
     responses: never;
@@ -422,18 +976,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ActivityResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Domain invariant violated */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
                 };
             };
         };
@@ -455,18 +1038,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ClaimResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Domain invariant violated */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
                 };
             };
         };
@@ -494,18 +1106,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ContextBundleResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Domain invariant violated */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
                 };
             };
         };
@@ -531,18 +1172,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ClaimHistoryResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Domain invariant violated */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
                 };
             };
         };
@@ -566,18 +1236,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SearchResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Domain invariant violated */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
                 };
             };
         };
@@ -601,18 +1300,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["GraphTraceResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Domain invariant violated */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
                 };
             };
         };
@@ -632,9 +1360,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+            /** @description Domain invariant violated */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
                 };
             };
         };
@@ -654,9 +1420,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+            /** @description Domain invariant violated */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
                 };
             };
         };
@@ -678,18 +1482,109 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["NamespaceResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Domain invariant violated */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+        };
+    };
+    list_namespace_actors_v1_namespaces__namespace_id__actors_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                namespace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActorListResponse"];
+                };
+            };
+            /** @description Domain invariant violated */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
                 };
             };
         };
@@ -711,18 +1606,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ProposalListResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Domain invariant violated */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
                 };
             };
         };
@@ -746,18 +1670,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ProposalResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Domain invariant violated */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
                 };
             };
         };
@@ -779,18 +1732,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ProposalResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Domain invariant violated */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
                 };
             };
         };
@@ -816,18 +1798,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ProposalResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Domain invariant violated */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
                 };
             };
         };
@@ -853,18 +1864,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ProposalResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Domain invariant violated */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
                 };
             };
         };
@@ -890,18 +1930,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ProposalResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Domain invariant violated */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
                 };
             };
         };
@@ -923,18 +1992,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ProposalResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Domain invariant violated */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
                 };
             };
         };
@@ -956,18 +2054,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ProposalResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Domain invariant violated */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
                 };
             };
         };
@@ -989,18 +2116,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SourceResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Domain invariant violated */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description Request validation failed */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ProblemDetail"];
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
                 };
             };
         };

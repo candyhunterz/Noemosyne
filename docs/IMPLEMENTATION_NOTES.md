@@ -1,20 +1,24 @@
 # Milestone 1 implementation notes
 
-The repository implements the supplied `03` invariants and `14` acceptance brief. Referenced documents `00_EXECUTIVE_OVERVIEW.md`, `04_DATA_MODEL.md`, `07_MACHINE_INTERFACE.md`, `10_MVP_SPECIFICATION.md`, and the companion `examples/ai_research_seed.yaml` were not present in the source package, so no unstated field or error vocabulary from those files could be reproduced. The shipped schema uses every required M1 table and every constraint described in the available brief.
+The repository implements the supplied `03` invariants and `14` acceptance brief. Referenced documents `00_EXECUTIVE_OVERVIEW.md`, `04_DATA_MODEL.md`, `07_MACHINE_INTERFACE.md`, `10_MVP_SPECIFICATION.md`, and the companion `examples/ai_research_seed.yaml` were not present in the source package, so no unstated field or error vocabulary from those files could be reproduced. The shipped schema uses every required M1 table and the constraints stated in the available normative documents.
 
 ## Acceptance map
 
-- Startup: pinned Docker images, Compose health checks, Alembic, `Makefile`.
-- Domain invariants: framework-free enums/value objects and unit/property tests.
-- Canonical store: all 31 tables, portable string checks, PostgreSQL-only production URL, append-only triggers.
-- Provenance: accepted canonical rows point to proposal items; seed creates curator, reviewer, accepted proposal, review, revision, and audit records.
-- Proposals: typed command allowlist; immutable submission; separation of duty; row locks; stale revision check; atomic apply; idempotent terminal result.
-- History: recorded-time plus valid-time filtering in context bundles and cutoff tests.
-- Retrieval: dependency-grouped, deterministically ordered context bundle with omissions; allowlisted graph traversal capped at depth 3 and 100 nodes.
-- Interface: `/v1` REST routes, RFC 9457 problem responses, generated OpenAPI and TypeScript schema.
-- Web: claim search/read/history, source view, review queue/detail, and activity routes.
-- Seed: versioned Pydantic envelope, UUIDv5 mapping, content hash, transactional import, same-hash no-op.
+- Startup and migration: pinned images, Compose health checks, and fresh PostgreSQL 18 migration/seed coverage in `tests/integration/test_postgres_constraints.py` and `test_postgres_audit.py`.
+- Domain invariants: framework-free value objects and shared conservative review/evidence policies in `tests/unit/test_domain.py` and `tests/property/test_invariants.py`.
+- Namespace integrity: centralized command-reference validation runs during draft validation and again inside apply. `tests/integration/test_namespace_integrity.py` covers mutation, linking, assessment, revision, reviewer, applier, and apply-time substitution paths; `test_postgres_audit.py` repeats critical cases on PostgreSQL.
+- Review policy: all append-only item decisions feed `noemosyne_domain.models.review_outcome`; reject/request-changes precedence, abstention, and conflicting decisions are covered in `test_proposal_workflow.py` and `test_postgres_audit.py`.
+- Evidence provenance: domain shape validation, transactional reference checks, deferred PostgreSQL provenance triggers, and retrieval filtering require accepted complete source fragments or exactly one accepted argument. Valid and invalid source/argument cases are exercised in `test_postgres_audit.py` and context tests.
+- Append-only history: migration `0002_audit_integrity` replaces the GUC bypass with unconditional accepted-row triggers and a validated security-definer current-version projection. Direct update/delete, old/arbitrary GUC attempts, accepted revision application, supersession, and historical cutoff behavior are covered in `test_postgres_audit.py`.
+- Proposals and transactionality: typed command allowlist, immutable submission, separation of duty, row locks, stale tokens, per-item preconditions, atomic rollback, audit append, and idempotence are covered by `test_proposal_workflow.py`, `test_namespace_integrity.py`, and PostgreSQL tests.
+- Historical retrieval: context and history independently filter recorded and valid time. Seed leakage, revision cutoff stability, assessment history, and deterministic dependency grouping are covered by `test_seed_and_history.py`, `test_postgres_audit.py`, and `test_graph_trace.py`.
+- REST contract: every public success response and RFC 9457 error has an explicit Pydantic schema. `tests/contract/test_openapi.py` validates schemas, representative payloads, error media/status/code fields, source-text non-disclosure, the HTTP proposal lifecycle, and committed OpenAPI synchronization.
+- Generated client: `openapi.json` and `apps/web/lib/generated-api/schema.d.ts` are generated together. Web routes import generated component types through `lib/generated-api/client.ts`; TypeScript checks include the Playwright suite.
+- Web workflow: `/review/[proposalId]` displays proposal metadata, validation, payload, preconditions, provenance, append-only decisions, effective outcomes, created IDs, trusted-local reviewer selection, item decisions, and apply/finalize controls. Server-side namespace and separation rules remain authoritative.
+- End to end: `tests/e2e/m1-workflow.spec.ts` imports/discovers the seed, searches and reads context/history, creates a narrower claim plus evidence, reviews each item in the browser, applies, verifies the old cutoff and current context, and checks activity/proposal provenance. CI runs it against a fresh Compose database.
+- Seed: versioned Pydantic envelope, UUIDv5 mapping, content hash, transactional import, same-hash no-op, and semantic export/import round trip remain covered by `test_seed_and_history.py`.
+- Security and release: CI runs dependency audits and HIGH/CRITICAL scans of both API and web runtime images. The API image removes build caches, uv, pip, and vendored package metadata after environment creation.
 
 ## Deliberate boundaries
 
-The review detail UI is read-only because M1 has no authentication model for safely choosing a reviewer identity in a browser. Review and apply remain fully available through the REST contract. PostgreSQL full-text ranking currently degrades to deterministic normalized substring matching; score fields are reserved for the planned indexed projection. MCP is deferred exactly as ADR 0007 requires.
+M1 has no authentication. Actor selection in the review UI is an explicit trusted-local provenance boundary and is labeled as such; deployment still requires operator-controlled access and TLS. PostgreSQL full-text search uses its current lexical/substring implementation, while vector retrieval remains deferred. MCP is not present and remains deferred to M2 by ADR 0007. There are no model-provider calls, autonomous agents, full ingestion, forecasts, or additional data services.

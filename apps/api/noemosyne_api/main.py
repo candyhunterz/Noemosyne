@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from noemosyne_domain.errors import ConflictError, DomainError, NotFoundError
 from opentelemetry import trace
@@ -48,6 +49,23 @@ def create_app() -> FastAPI:
                 "status": status,
                 "detail": error.detail,
                 "code": error.code,
+                "instance": str(request.url.path),
+            },
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(
+        request: Request, error: RequestValidationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            media_type="application/problem+json",
+            content={
+                "type": "https://noemosyne.dev/problems/request.validation_failed",
+                "title": "Request validation failed",
+                "status": 422,
+                "detail": "Request body or parameters did not match the public contract",
+                "code": "request.validation_failed",
                 "instance": str(request.url.path),
             },
         )

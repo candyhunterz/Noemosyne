@@ -1,4 +1,4 @@
-FROM node:24-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS build
+FROM node:26-slim@sha256:c0753125a3789977aefe869cbebccf70e3cfd7ea84ca48547458f02e4f1d7146 AS build
 RUN npm install --global pnpm@11.24.0
 WORKDIR /app
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
@@ -7,7 +7,7 @@ RUN pnpm install --frozen-lockfile
 COPY apps/web apps/web
 RUN pnpm --filter @noemosyne/web build
 
-FROM node:24-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS runtime
+FROM node:26-slim@sha256:c0753125a3789977aefe869cbebccf70e3cfd7ea84ca48547458f02e4f1d7146 AS runtime
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 WORKDIR /app
 COPY --from=build /app/apps/web/.next/standalone ./

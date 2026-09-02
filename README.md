@@ -77,7 +77,7 @@ Prerequisites are Docker Desktop, or Python 3.13 with `uv` plus Node.js with `pn
 make start
 ```
 
-The web UI starts at <http://localhost:3000> and development API docs at <http://localhost:8000/v1/docs>. In another terminal, import the illustrative seed:
+The web UI starts at <http://localhost:3001> and development API docs at <http://localhost:8000/v1/docs>. Override the web port with `NOEMOSYNE_WEB_PORT` if needed. In another terminal, import the illustrative seed:
 
 ```sh
 docker compose exec api noemosyne-seed import examples/ai-research/seed.yaml

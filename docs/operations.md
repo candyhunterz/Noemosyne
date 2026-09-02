@@ -2,7 +2,7 @@
 
 ## Local start
 
-Run `make start`, migrate/import automatically through the API container startup, then run `docker compose exec api noemosyne-seed import examples/ai-research/seed.yaml` if the example directory is mounted or import from a local `uv` environment. The API is at `http://localhost:8000/v1/docs`; the web UI is at `http://localhost:3000`.
+Run `make start`, migrate/import automatically through the API container startup, then run `docker compose exec api noemosyne-seed import examples/ai-research/seed.yaml` if the example directory is mounted or import from a local `uv` environment. The API is at `http://localhost:8000/v1/docs`; the web UI is at `http://localhost:3001`. Set `NOEMOSYNE_WEB_PORT` to override the web port.
 
 ## Backup and restore
 

@@ -15,6 +15,7 @@ from noemosyne_db.models import (
     AuditEvent,
     Claim,
     ClaimVersion,
+    Entity,
     EpistemicAssessment,
     EvidenceItem,
     EvidenceItemSource,
@@ -22,6 +23,7 @@ from noemosyne_db.models import (
     Namespace,
     Proposal,
     ProposalItem,
+    ReviewDecision,
     RevisionEvent,
     SourceArtifact,
     SourceFragment,
@@ -73,12 +75,42 @@ def _claim_state(session: Session, slug: str):
     )
     session.add_all([proposer, reviewer])
     session.flush()
+    provenance_proposal = Proposal(
+        namespace_id=namespace.id,
+        proposer_actor_id=proposer.id,
+        title=f"Synthetic accepted fixture {slug}",
+        base_revision_token=0,
+        status="accepted",
+        submitted_at=datetime.now(UTC),
+        applied_at=datetime.now(UTC),
+        applied_by_actor_id=reviewer.id,
+    )
+    session.add(provenance_proposal)
+    session.flush()
+    provenance_item = ProposalItem(
+        proposal_id=provenance_proposal.id,
+        position=0,
+        command_type="TestFixture",
+        payload_json={"fixture": slug},
+        status="accepted",
+    )
+    session.add(provenance_item)
+    session.flush()
+    session.add(
+        ReviewDecision(
+            proposal_item_id=provenance_item.id,
+            reviewer_actor_id=reviewer.id,
+            decision="accept",
+            rationale="Synthetic fixture provenance",
+        )
+    )
     claim_id, version_id = _identity(), _identity()
     claim = Claim(
         id=claim_id,
         namespace_id=namespace.id,
         current_version_id=version_id,
         status="accepted",
+        proposal_item_id=provenance_item.id,
     )
     version = ClaimVersion(
         id=version_id,
@@ -88,16 +120,198 @@ def _claim_state(session: Session, slug: str):
         scope_json={"fixture": slug},
         valid_from=datetime(2025, 1, 1, tzinfo=UTC),
         status="accepted",
+        proposal_item_id=provenance_item.id,
     )
     session.add_all([claim, version])
     session.commit()
-    return namespace, proposer, reviewer, claim, version
+    return namespace, proposer, reviewer, claim, version, provenance_item
+
+
+def _insert_entity_with_process_provenance(
+    session: Session,
+    *,
+    proposal_status: str = "accepted",
+    item_status: str = "accepted",
+    decisions: tuple[str, ...] = ("accept",),
+    proposal_item_reference: str = "existing",
+    self_review: bool = False,
+    cross_namespace_reviewer: bool = False,
+    cross_namespace_entity: bool = False,
+) -> Entity:
+    suffix = _identity()
+    namespace = Namespace(slug=f"process-{suffix}", name="Process provenance")
+    other_namespace = Namespace(slug=f"process-other-{suffix}", name="Other process")
+    session.add_all([namespace, other_namespace])
+    session.flush()
+    proposer = Actor(
+        namespace_id=namespace.id,
+        kind="human",
+        display_name="Process proposer",
+        external_id=f"process-proposer-{suffix}",
+    )
+    reviewer = Actor(
+        namespace_id=other_namespace.id if cross_namespace_reviewer else namespace.id,
+        kind="human",
+        display_name="Process reviewer",
+        external_id=f"process-reviewer-{suffix}",
+    )
+    session.add_all([proposer, reviewer])
+    session.flush()
+    proposal = Proposal(
+        namespace_id=namespace.id,
+        proposer_actor_id=proposer.id,
+        title="Process provenance candidate",
+        base_revision_token=0,
+        status=proposal_status,
+    )
+    session.add(proposal)
+    session.flush()
+    item = ProposalItem(
+        proposal_id=proposal.id,
+        position=0,
+        command_type="TestFixture",
+        payload_json={},
+        status=item_status,
+    )
+    session.add(item)
+    session.flush()
+    for decision in decisions:
+        session.add(
+            ReviewDecision(
+                proposal_item_id=item.id,
+                reviewer_actor_id=proposer.id if self_review else reviewer.id,
+                decision=decision,
+                rationale=f"Process provenance {decision}",
+            )
+        )
+    item_reference = {
+        "existing": item.id,
+        "missing": _identity(),
+        "null": None,
+    }[proposal_item_reference]
+    entity = Entity(
+        namespace_id=other_namespace.id if cross_namespace_entity else namespace.id,
+        kind="concept",
+        canonical_name=f"Process entity {suffix}",
+        status="accepted",
+        proposal_item_id=item_reference,
+    )
+    session.add(entity)
+    session.commit()
+    return entity
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("proposal_item_reference", "message"),
+    [
+        ("null", "proposal[ _]item"),
+        ("missing", "proposal[ _]item"),
+    ],
+)
+def test_accepted_rows_require_an_existing_proposal_item(
+    postgres_engine: Engine, proposal_item_reference: str, message: str
+) -> None:
+    with Session(postgres_engine) as session, pytest.raises(DBAPIError, match=message):
+        _insert_entity_with_process_provenance(
+            session, proposal_item_reference=proposal_item_reference
+        )
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("item_status", ["pending", "valid", "rejected"])
+def test_accepted_rows_require_an_accepted_item(postgres_engine: Engine, item_status: str) -> None:
+    with (
+        Session(postgres_engine) as session,
+        pytest.raises(DBAPIError, match="requires an accepted proposal item"),
+    ):
+        _insert_entity_with_process_provenance(session, item_status=item_status)
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("proposal_status", ["draft", "in_review", "rejected"])
+def test_accepted_rows_require_a_terminal_accepted_proposal(
+    postgres_engine: Engine, proposal_status: str
+) -> None:
+    with (
+        Session(postgres_engine) as session,
+        pytest.raises(DBAPIError, match="terminal accepted proposal"),
+    ):
+        _insert_entity_with_process_provenance(session, proposal_status=proposal_status)
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    "decisions",
+    [("abstain",), ("accept", "reject"), ("accept", "request_changes")],
+)
+def test_accepted_rows_require_an_effective_conservative_acceptance(
+    postgres_engine: Engine, decisions: tuple[str, ...]
+) -> None:
+    with (
+        Session(postgres_engine) as session,
+        pytest.raises(DBAPIError, match="effective separated accepted review"),
+    ):
+        _insert_entity_with_process_provenance(session, decisions=decisions)
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    "invalid_provenance", ["self_review", "cross_namespace_reviewer", "cross_namespace_entity"]
+)
+def test_process_provenance_preserves_separation_and_namespace(
+    postgres_engine: Engine, invalid_provenance: str
+) -> None:
+    expected = (
+        "proposer cannot review their own proposal"
+        if invalid_provenance == "self_review"
+        else "reviewer must belong to the proposal namespace"
+        if invalid_provenance == "cross_namespace_reviewer"
+        else "provenance namespace mismatch"
+    )
+    with Session(postgres_engine) as session, pytest.raises(DBAPIError, match=expected):
+        _insert_entity_with_process_provenance(
+            session,
+            self_review=invalid_provenance == "self_review",
+            cross_namespace_reviewer=invalid_provenance == "cross_namespace_reviewer",
+            cross_namespace_entity=invalid_provenance == "cross_namespace_entity",
+        )
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("proposal_status", ["accepted", "partially_accepted"])
+def test_valid_terminal_process_provenance_accepts_canonical_rows(
+    postgres_engine: Engine, proposal_status: str
+) -> None:
+    with Session(postgres_engine) as session:
+        entity = _insert_entity_with_process_provenance(session, proposal_status=proposal_status)
+        assert entity.proposal_item_id is not None
+
+
+@pytest.mark.postgres
+def test_nonaccepted_candidate_can_exist_without_process_provenance(
+    postgres_engine: Engine,
+) -> None:
+    with Session(postgres_engine) as session:
+        namespace = Namespace(slug=f"candidate-{_identity()}", name="Candidate namespace")
+        session.add(namespace)
+        session.flush()
+        candidate = Entity(
+            namespace_id=namespace.id,
+            kind="concept",
+            canonical_name="Unaccepted candidate",
+            status="proposed",
+            proposal_item_id=None,
+        )
+        session.add(candidate)
+        session.commit()
+        assert candidate.status == "proposed"
 
 
 @pytest.mark.postgres
 def test_append_only_projection_and_supersession_history(postgres_engine: Engine) -> None:
     with Session(postgres_engine, expire_on_commit=False) as session:
-        namespace, proposer, reviewer, claim, old_version = _claim_state(
+        namespace, proposer, reviewer, claim, old_version, _ = _claim_state(
             session, "append-projection"
         )
         cutoff = datetime.now(UTC)
@@ -188,12 +402,15 @@ def test_append_only_projection_and_supersession_history(postgres_engine: Engine
 @pytest.mark.postgres
 def test_postgres_evidence_provenance_constraints_and_context(postgres_engine: Engine) -> None:
     with Session(postgres_engine, expire_on_commit=False) as session:
-        namespace, proposer, _, claim, _ = _claim_state(session, "evidence-provenance")
+        namespace, proposer, _, claim, _, provenance_item = _claim_state(
+            session, "evidence-provenance"
+        )
         policy = AssessmentPolicy(
             namespace_id=namespace.id,
             name="Evidence policy",
             version="1",
             status="accepted",
+            proposal_item_id=provenance_item.id,
         )
         source = SourceArtifact(
             namespace_id=namespace.id,
@@ -202,6 +419,7 @@ def test_postgres_evidence_provenance_constraints_and_context(postgres_engine: E
             canonical_uri="https://example.test/complete",
             license_basis="metadata-only",
             status="accepted",
+            proposal_item_id=provenance_item.id,
         )
         session.add_all([policy, source])
         session.flush()
@@ -212,11 +430,17 @@ def test_postgres_evidence_provenance_constraints_and_context(postgres_engine: E
             text_hash="fixture-hash",
             license_basis="test-fixture-license",
             status="accepted",
+            proposal_item_id=provenance_item.id,
         )
         session.add(fragment)
         session.commit()
 
-        missing = EvidenceItem(namespace_id=namespace.id, kind="source_fragment", status="accepted")
+        missing = EvidenceItem(
+            namespace_id=namespace.id,
+            kind="source_fragment",
+            status="accepted",
+            proposal_item_id=provenance_item.id,
+        )
         session.add(missing)
         with pytest.raises(DBAPIError, match="resolvable provenance"):
             session.commit()
@@ -229,6 +453,7 @@ def test_postgres_evidence_provenance_constraints_and_context(postgres_engine: E
             canonical_uri="",
             license_basis="",
             status="accepted",
+            proposal_item_id=provenance_item.id,
         )
         session.add(incomplete)
         with pytest.raises(DBAPIError):
@@ -242,6 +467,7 @@ def test_postgres_evidence_provenance_constraints_and_context(postgres_engine: E
             text_hash=None,
             license_basis="test-fixture-license",
             status="accepted",
+            proposal_item_id=provenance_item.id,
         )
         session.add(missing_hash)
         with pytest.raises(DBAPIError):
@@ -253,6 +479,7 @@ def test_postgres_evidence_provenance_constraints_and_context(postgres_engine: E
             kind="argument",
             argument_id=None,
             status="accepted",
+            proposal_item_id=provenance_item.id,
         )
         session.add(missing_argument)
         with pytest.raises(DBAPIError):
@@ -260,7 +487,10 @@ def test_postgres_evidence_provenance_constraints_and_context(postgres_engine: E
         session.rollback()
 
         source_item = EvidenceItem(
-            namespace_id=namespace.id, kind="source_fragment", status="accepted"
+            namespace_id=namespace.id,
+            kind="source_fragment",
+            status="accepted",
+            proposal_item_id=provenance_item.id,
         )
         session.add(source_item)
         session.flush()
@@ -269,6 +499,7 @@ def test_postgres_evidence_provenance_constraints_and_context(postgres_engine: E
                 evidence_item_id=source_item.id,
                 source_fragment_id=fragment.id,
                 status="accepted",
+                proposal_item_id=provenance_item.id,
             )
         )
         argument = Argument(
@@ -278,6 +509,7 @@ def test_postgres_evidence_provenance_constraints_and_context(postgres_engine: E
             inference_scheme="deductive",
             rationale="An explicit argument",
             status="accepted",
+            proposal_item_id=provenance_item.id,
         )
         session.add(argument)
         session.flush()
@@ -288,6 +520,7 @@ def test_postgres_evidence_provenance_constraints_and_context(postgres_engine: E
                 premise_id=claim.id,
                 position=0,
                 status="accepted",
+                proposal_item_id=provenance_item.id,
             )
         )
         argument_item = EvidenceItem(
@@ -295,6 +528,7 @@ def test_postgres_evidence_provenance_constraints_and_context(postgres_engine: E
             kind="argument",
             argument_id=argument.id,
             status="accepted",
+            proposal_item_id=provenance_item.id,
         )
         session.add(argument_item)
         session.flush()
@@ -310,6 +544,7 @@ def test_postgres_evidence_provenance_constraints_and_context(postgres_engine: E
                     strength_band="material",
                     scope_match="Exact fixture scope",
                     status="accepted",
+                    proposal_item_id=provenance_item.id,
                 )
             )
         session.commit()
@@ -326,9 +561,7 @@ def test_postgres_evidence_provenance_constraints_and_context(postgres_engine: E
         assert any(item["sources"] for item in returned)
         assert any(item["argument"] is not None for item in returned)
 
-        namespace_b = Namespace(slug="evidence-other", name="Evidence other")
-        session.add(namespace_b)
-        session.flush()
+        namespace_b, _, _, _, _, provenance_item_b = _claim_state(session, "evidence-other")
         source_b = SourceArtifact(
             namespace_id=namespace_b.id,
             kind="paper",
@@ -336,6 +569,7 @@ def test_postgres_evidence_provenance_constraints_and_context(postgres_engine: E
             canonical_uri="https://example.test/other",
             license_basis="metadata-only",
             status="accepted",
+            proposal_item_id=provenance_item_b.id,
         )
         session.add(source_b)
         session.flush()
@@ -344,11 +578,15 @@ def test_postgres_evidence_provenance_constraints_and_context(postgres_engine: E
             locator_json={"section": "x"},
             license_basis="locator-only",
             status="accepted",
+            proposal_item_id=provenance_item_b.id,
         )
         session.add(fragment_b)
         session.flush()
         cross_item = EvidenceItem(
-            namespace_id=namespace.id, kind="source_fragment", status="accepted"
+            namespace_id=namespace.id,
+            kind="source_fragment",
+            status="accepted",
+            proposal_item_id=provenance_item.id,
         )
         session.add(cross_item)
         session.flush()
@@ -357,6 +595,7 @@ def test_postgres_evidence_provenance_constraints_and_context(postgres_engine: E
                 evidence_item_id=cross_item.id,
                 source_fragment_id=fragment_b.id,
                 status="accepted",
+                proposal_item_id=provenance_item.id,
             )
         )
         with pytest.raises(DBAPIError, match="resolvable provenance"):
@@ -379,6 +618,7 @@ def test_postgres_evidence_provenance_constraints_and_context(postgres_engine: E
                 strength_band="material",
                 scope_match="Invalid fixture",
                 status="accepted",
+                proposal_item_id=provenance_item.id,
             )
         )
         with pytest.raises(DBAPIError, match="resolvable provenance"):
@@ -389,7 +629,7 @@ def test_postgres_evidence_provenance_constraints_and_context(postgres_engine: E
 @pytest.mark.postgres
 def test_conflicting_review_and_concurrent_identity_proposals(postgres_engine: Engine) -> None:
     with Session(postgres_engine, expire_on_commit=False) as session:
-        namespace, proposer, reviewer, claim, old_version = _claim_state(
+        namespace, proposer, reviewer, claim, old_version, _ = _claim_state(
             session, "review-concurrency"
         )
         reviewer_two = Actor(
@@ -464,7 +704,7 @@ def test_conflicting_review_and_concurrent_identity_proposals(postgres_engine: E
         assert stale.value.code == "proposal.stale_base_revision"
         assert namespace.revision_token == 1
 
-        b_namespace, b_proposer, b_reviewer, b_claim, _ = _claim_state(
+        b_namespace, b_proposer, b_reviewer, b_claim, _, _ = _claim_state(
             session, "cross-namespace-pg"
         )
         cross = Proposal(
@@ -499,12 +739,15 @@ def test_conflicting_review_and_concurrent_identity_proposals(postgres_engine: E
 @pytest.mark.postgres
 def test_assessments_form_supersession_and_revision_chains(postgres_engine: Engine) -> None:
     with Session(postgres_engine, expire_on_commit=False) as session:
-        namespace, proposer, reviewer, claim, _ = _claim_state(session, "assessment-chain")
+        namespace, proposer, reviewer, claim, _, provenance_item = _claim_state(
+            session, "assessment-chain"
+        )
         policy = AssessmentPolicy(
             namespace_id=namespace.id,
             name="Assessment chain policy",
             version="1",
             status="accepted",
+            proposal_item_id=provenance_item.id,
         )
         argument = Argument(
             namespace_id=namespace.id,
@@ -513,6 +756,7 @@ def test_assessments_form_supersession_and_revision_chains(postgres_engine: Engi
             inference_scheme="deductive",
             rationale="Accepted assessment input",
             status="accepted",
+            proposal_item_id=provenance_item.id,
         )
         session.add_all([policy, argument])
         session.flush()
@@ -523,6 +767,7 @@ def test_assessments_form_supersession_and_revision_chains(postgres_engine: Engi
                 premise_id=claim.id,
                 position=0,
                 status="accepted",
+                proposal_item_id=provenance_item.id,
             )
         )
         session.commit()
@@ -604,7 +849,7 @@ def test_failed_postgres_application_rolls_back_canonical_and_audit_effects(
     postgres_engine: Engine,
 ) -> None:
     with Session(postgres_engine, expire_on_commit=False) as session:
-        namespace, proposer, reviewer, _, _ = _claim_state(session, "rollback-pg")
+        namespace, proposer, reviewer, _, _, _ = _claim_state(session, "rollback-pg")
         proposal = Proposal(
             namespace_id=namespace.id,
             proposer_actor_id=proposer.id,

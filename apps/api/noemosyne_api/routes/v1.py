@@ -97,6 +97,15 @@ def _public_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return public
 
 
+def _utc_datetime(value: datetime | None) -> datetime | None:
+    """Normalize SQLite and PostgreSQL timestamps to the same public UTC shape."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 def _serialize_proposal(session: Session, proposal: Proposal) -> ProposalResponse:
     items = session.scalars(
         select(ProposalItem)
@@ -142,9 +151,9 @@ def _serialize_proposal(session: Session, proposal: Proposal) -> ProposalRespons
             "description": proposal.description,
             "base_revision_token": proposal.base_revision_token,
             "status": proposal.status,
-            "recorded_at": proposal.recorded_at,
-            "submitted_at": proposal.submitted_at,
-            "applied_at": proposal.applied_at,
+            "recorded_at": _utc_datetime(proposal.recorded_at),
+            "submitted_at": _utc_datetime(proposal.submitted_at),
+            "applied_at": _utc_datetime(proposal.applied_at),
             "applied_by_actor_id": proposal.applied_by_actor_id,
             "items": result_items,
         }

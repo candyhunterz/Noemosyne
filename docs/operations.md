@@ -10,6 +10,8 @@ Accepted ledger rows reject direct updates and deletes in PostgreSQL. Setting `n
 
 Operational SQL must not invoke the projection function as a repair shortcut. Corrections use the normal proposal/review/apply workflow. Restore verification includes checking that accepted rows reject `UPDATE`/`DELETE`, the projection role remains `NOLOGIN`, and supersession chains have no missing targets or cycles.
 
+Migration `0004_process_provenance` adds deferred constraint triggers to every canonical table. At commit, each accepted row must resolve to an accepted proposal item under an accepted or partially accepted proposal, with an effective same-namespace independent acceptance and no rejecting or request-changes decision. The row's explicit or derived namespace must match the proposal namespace. These checks have no session switch or operational bypass; failed repair imports must be corrected as proposals or restored from a verified backup.
+
 ## Backup and restore
 
 Canonical history is append-only, so PostgreSQL backups are the recovery unit. Create a consistent custom-format backup with `pg_dump --format=custom --dbname "$DATABASE_URL" --file noemosyne.dump`. Restore only into a fresh database using `pg_restore --clean --if-exists --exit-on-error`. Verify the Alembic revision, namespace revision tokens, audit counts, and seed package hashes before directing clients to it.

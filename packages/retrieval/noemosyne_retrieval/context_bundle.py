@@ -18,6 +18,8 @@ from noemosyne_db.models import (
     EvidenceItem,
     EvidenceItemSource,
     EvidenceLink,
+    Proposal,
+    ProposalItem,
     SourceArtifact,
     SourceFragment,
 )
@@ -251,11 +253,16 @@ def build_context_bundle(
     if include_open_challenges:
         rows = session.scalars(
             select(Challenge)
+            .join(ProposalItem, ProposalItem.id == Challenge.proposal_item_id)
+            .join(Proposal, Proposal.id == ProposalItem.proposal_id)
             .where(
+                Challenge.target_type == "claim",
                 Challenge.target_id == claim_id,
+                Challenge.namespace_id == claim.namespace_id,
                 Challenge.status == "accepted",
                 Challenge.resolution_status == "open",
                 Challenge.recorded_at <= knowledge_cutoff,
+                Proposal.namespace_id == claim.namespace_id,
             )
             .order_by(Challenge.recorded_at, Challenge.id)
         ).all()

@@ -36,6 +36,13 @@ def test_fresh_postgres_migration_seed_and_append_only_constraints() -> None:
                 )
             )
             assert required_table_count == 31
+            process_trigger_count = connection.scalar(
+                text(
+                    "SELECT count(*) FROM pg_trigger "
+                    "WHERE tgname LIKE '%_process_provenance' AND NOT tgisinternal"
+                )
+            )
+            assert process_trigger_count == 24
             connection.commit()
             with pytest.raises(DBAPIError, match="append-only"):
                 connection.execute(

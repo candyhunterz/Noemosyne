@@ -51,7 +51,9 @@ class CanonicalMixin(IdTimeMixin):
     status: Mapped[str] = mapped_column(String(24), default="accepted")
     supersedes_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     proposal_item_id: Mapped[str | None] = mapped_column(
-        ForeignKey("proposal_items.id"), nullable=True, index=True
+        ForeignKey("proposal_items.id", deferrable=True, initially="DEFERRED"),
+        nullable=True,
+        index=True,
     )
 
 

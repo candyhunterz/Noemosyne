@@ -24,8 +24,12 @@ def trace_claim_graph(
     visited = {start_claim_id}
     frontier = {start_claim_id}
     edges: list[dict[str, str | int]] = []
+    emitted_edges: set[str] = set()
+    truncated = False
     for depth in range(1, depth_limit + 1):
-        if not frontier or len(visited) >= node_limit:
+        if not frontier:
+            break
+        if not allowed:
             break
         rows = session.scalars(
             select(ClaimRelation)
@@ -41,25 +45,28 @@ def trace_claim_graph(
                 ClaimRelation.relation_type,
                 ClaimRelation.source_claim_id,
                 ClaimRelation.target_claim_id,
+                ClaimRelation.id,
             )
         ).all()
         next_frontier: set[str] = set()
         for row in rows:
-            candidate = (
-                row.target_claim_id if row.source_claim_id in frontier else row.source_claim_id
-            )
-            if candidate not in visited and len(visited) >= node_limit:
+            new_nodes = sorted({row.source_claim_id, row.target_claim_id} - visited)
+            if new_nodes and len(visited) + len(new_nodes) > node_limit:
+                truncated = True
                 continue
-            visited.add(candidate)
-            next_frontier.add(candidate)
-            edges.append(
-                {
-                    "id": row.id,
-                    "source": row.source_claim_id,
-                    "target": row.target_claim_id,
-                    "type": row.relation_type,
-                    "depth": depth,
-                }
-            )
+            for candidate in new_nodes:
+                visited.add(candidate)
+                next_frontier.add(candidate)
+            if row.id not in emitted_edges:
+                emitted_edges.add(row.id)
+                edges.append(
+                    {
+                        "id": row.id,
+                        "source": row.source_claim_id,
+                        "target": row.target_claim_id,
+                        "type": row.relation_type,
+                        "depth": depth,
+                    }
+                )
         frontier = next_frontier
-    return {"nodes": sorted(visited), "edges": edges, "truncated": len(visited) >= node_limit}
+    return {"nodes": sorted(visited), "edges": edges, "truncated": truncated}

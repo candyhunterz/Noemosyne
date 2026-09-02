@@ -160,7 +160,7 @@ async def test_all_public_read_success_payloads_validate_explicit_models(session
 
 @pytest.mark.asyncio
 async def test_http_proposal_lifecycle_and_rfc9457_errors(session) -> None:
-    from noemosyne_db.models import Actor, Namespace
+    from noemosyne_db.models import Actor, AuditEvent, Claim, Namespace
 
     namespace = Namespace(slug="http-contract", name="HTTP contract")
     session.add(namespace)
@@ -177,7 +177,13 @@ async def test_http_proposal_lifecycle_and_rfc9457_errors(session) -> None:
         display_name="HTTP reviewer",
         external_id="http-r",
     )
-    session.add_all([proposer, reviewer])
+    retry_actor = Actor(
+        namespace_id=namespace.id,
+        kind="human",
+        display_name="HTTP retry actor",
+        external_id="http-retry",
+    )
+    session.add_all([proposer, reviewer, retry_actor])
     session.commit()
 
     def override_session():
@@ -233,6 +239,30 @@ async def test_http_proposal_lifecycle_and_rfc9457_errors(session) -> None:
             proposal = ProposalResponse.model_validate(applied.json())
             assert proposal.status == "accepted"
             assert proposal.items[0].created_canonical_ids
+            accepted_snapshot = (
+                proposal.applied_at,
+                proposal.applied_by_actor_id,
+                tuple(proposal.items[0].created_canonical_ids),
+                namespace.revision_token,
+                session.query(Claim).count(),
+                session.query(AuditEvent).count(),
+            )
+
+            # The first success could have reached the server while its response was lost.
+            ambiguous_retry = await client.post(
+                f"/v1/proposals/{proposal.id}:apply",
+                json={"applied_by_actor_id": retry_actor.id},
+            )
+            retried = ProposalResponse.model_validate(ambiguous_retry.json())
+            assert ambiguous_retry.status_code == 200
+            assert (
+                retried.applied_at,
+                retried.applied_by_actor_id,
+                tuple(retried.items[0].created_canonical_ids),
+                namespace.revision_token,
+                session.query(Claim).count(),
+                session.query(AuditEvent).count(),
+            ) == accepted_snapshot
 
             missing = await client.get("/v1/claims/not-a-claim")
             assert missing.status_code == 404
@@ -247,5 +277,163 @@ async def test_http_proposal_lifecycle_and_rfc9457_errors(session) -> None:
             assert invalid_problem.status == 422
             assert invalid_problem.code == "request.validation_failed"
             assert invalid.headers["content-type"].startswith("application/problem+json")
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_http_partial_rejected_and_stale_apply_retries_are_stable(session) -> None:
+    from noemosyne_db.models import Actor, AuditEvent, Claim, Namespace
+
+    namespace = Namespace(slug="http-idempotence", name="HTTP idempotence")
+    session.add(namespace)
+    session.flush()
+    proposer = Actor(
+        namespace_id=namespace.id,
+        kind="human",
+        display_name="HTTP idempotence proposer",
+        external_id="http-idempotence-p",
+    )
+    reviewer = Actor(
+        namespace_id=namespace.id,
+        kind="human",
+        display_name="HTTP idempotence reviewer",
+        external_id="http-idempotence-r",
+    )
+    retry_actor = Actor(
+        namespace_id=namespace.id,
+        kind="human",
+        display_name="HTTP idempotence retry actor",
+        external_id="http-idempotence-retry",
+    )
+    session.add_all([proposer, reviewer, retry_actor])
+    session.commit()
+
+    def override_session():
+        yield session
+
+    app.dependency_overrides[get_session] = override_session
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+
+            async def prepare(decisions: list[str], title: str) -> ProposalResponse:
+                created = await client.post(
+                    "/v1/proposals",
+                    json={
+                        "namespace_id": namespace.id,
+                        "proposer_actor_id": proposer.id,
+                        "title": title,
+                        "description": "HTTP retry regression",
+                        "base_revision_token": namespace.revision_token,
+                    },
+                )
+                proposal = ProposalResponse.model_validate(created.json())
+                for position in range(len(decisions)):
+                    added = await client.post(
+                        f"/v1/proposals/{proposal.id}/items",
+                        json={
+                            "command_type": "CreateClaim",
+                            "payload": {
+                                "wording": f"HTTP retry claim {title} {position}.",
+                                "scope_json": {"position": position},
+                                "valid_from": "2025-01-01T00:00:00Z",
+                            },
+                            "preconditions": {},
+                        },
+                    )
+                    proposal = ProposalResponse.model_validate(added.json())
+                await client.post(f"/v1/proposals/{proposal.id}:validate")
+                submitted = await client.post(f"/v1/proposals/{proposal.id}:submit")
+                proposal = ProposalResponse.model_validate(submitted.json())
+                for item, decision in zip(proposal.items, decisions, strict=True):
+                    reviewed = await client.post(
+                        f"/v1/proposals/{proposal.id}/reviews",
+                        json={
+                            "proposal_item_id": item.id,
+                            "reviewer_actor_id": reviewer.id,
+                            "decision": decision,
+                            "rationale": f"HTTP {decision} decision",
+                        },
+                    )
+                    proposal = ProposalResponse.model_validate(reviewed.json())
+                return proposal
+
+            partial = await prepare(["accept", "reject"], "Partially accepted")
+            partial_first = await client.post(
+                f"/v1/proposals/{partial.id}:apply",
+                json={"applied_by_actor_id": reviewer.id},
+            )
+            partial_result = ProposalResponse.model_validate(partial_first.json())
+            assert partial_result.status == "partially_accepted"
+            partial_snapshot = (
+                partial_result.applied_at,
+                partial_result.applied_by_actor_id,
+                tuple(tuple(item.created_canonical_ids) for item in partial_result.items),
+                namespace.revision_token,
+                session.query(Claim).count(),
+                session.query(AuditEvent).count(),
+            )
+            partial_retry = await client.post(
+                f"/v1/proposals/{partial.id}:apply",
+                json={"applied_by_actor_id": retry_actor.id},
+            )
+            partial_retried = ProposalResponse.model_validate(partial_retry.json())
+            assert (
+                partial_retried.applied_at,
+                partial_retried.applied_by_actor_id,
+                tuple(tuple(item.created_canonical_ids) for item in partial_retried.items),
+                namespace.revision_token,
+                session.query(Claim).count(),
+                session.query(AuditEvent).count(),
+            ) == partial_snapshot
+
+            rejected = await prepare(["reject"], "Rejected")
+            rejected_first = await client.post(
+                f"/v1/proposals/{rejected.id}:apply",
+                json={"applied_by_actor_id": reviewer.id},
+            )
+            rejected_result = ProposalResponse.model_validate(rejected_first.json())
+            assert rejected_result.status == "rejected"
+            rejected_snapshot = (
+                rejected_result.applied_at,
+                rejected_result.applied_by_actor_id,
+                namespace.revision_token,
+                session.query(Claim).count(),
+                session.query(AuditEvent).count(),
+            )
+            rejected_retry = await client.post(
+                f"/v1/proposals/{rejected.id}:apply",
+                json={"applied_by_actor_id": retry_actor.id},
+            )
+            rejected_retried = ProposalResponse.model_validate(rejected_retry.json())
+            assert (
+                rejected_retried.applied_at,
+                rejected_retried.applied_by_actor_id,
+                namespace.revision_token,
+                session.query(Claim).count(),
+                session.query(AuditEvent).count(),
+            ) == rejected_snapshot
+
+            stale = await prepare(["accept"], "Stale")
+            namespace.revision_token += 1
+            session.commit()
+            stale_snapshot = (
+                namespace.revision_token,
+                session.query(Claim).count(),
+                session.query(AuditEvent).count(),
+            )
+            for _ in range(2):
+                stale_response = await client.post(
+                    f"/v1/proposals/{stale.id}:apply",
+                    json={"applied_by_actor_id": reviewer.id},
+                )
+                assert stale_response.status_code == 409
+                stale_problem = ProblemDetail.model_validate(stale_response.json())
+                assert stale_problem.code == "proposal.stale_base_revision"
+                assert (
+                    namespace.revision_token,
+                    session.query(Claim).count(),
+                    session.query(AuditEvent).count(),
+                ) == stale_snapshot
     finally:
         app.dependency_overrides.clear()

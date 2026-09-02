@@ -788,8 +788,12 @@ def apply_proposal(session: Session, proposal_id: str, applied_by_actor_id: str)
         )
         if proposal is None:
             raise NotFoundError("proposal.not_found", "Proposal not found")
-        if proposal.status in {"accepted", "partially_accepted"}:
+        if proposal.status in {"accepted", "partially_accepted", "rejected"}:
             return proposal
+        if proposal.status == "stale":
+            raise ConflictError(
+                "proposal.stale_base_revision", "Namespace changed after proposal creation"
+            )
         if proposal.status != "in_review":
             raise ConflictError("proposal.not_in_review", "Proposal must be submitted before apply")
         namespace = session.scalar(

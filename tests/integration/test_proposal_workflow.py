@@ -52,6 +52,14 @@ def setup_proposal(session):
 
 def test_proposal_apply_is_reviewed_atomic_and_idempotent(session) -> None:
     namespace, _, reviewer, proposal, item = setup_proposal(session)
+    retry_actor = Actor(
+        namespace_id=namespace.id,
+        kind="human",
+        display_name="Retry actor",
+        external_id="retry-actor",
+    )
+    session.add(retry_actor)
+    session.commit()
     validate_proposal(session, proposal.id)
     submit_proposal(session, proposal.id)
     add_review(
@@ -60,8 +68,104 @@ def test_proposal_apply_is_reviewed_atomic_and_idempotent(session) -> None:
     result = apply_proposal(session, proposal.id, reviewer.id)
     assert result.status == "accepted"
     assert namespace.revision_token == 1
-    assert apply_proposal(session, proposal.id, reviewer.id).id == result.id
+    original_applied_at = result.applied_at
+    original_created_ids = list(item.created_canonical_ids_json)
+    original_counts = (
+        session.query(Claim).count(),
+        session.query(AuditEvent).count(),
+    )
+
+    retry = apply_proposal(session, proposal.id, retry_actor.id)
+
+    assert retry.id == result.id
     assert namespace.revision_token == 1
+    assert retry.applied_at == original_applied_at
+    assert retry.applied_by_actor_id == reviewer.id
+    assert item.created_canonical_ids_json == original_created_ids
+    assert (session.query(Claim).count(), session.query(AuditEvent).count()) == original_counts
+
+
+def test_partially_accepted_proposal_retry_preserves_original_result(session) -> None:
+    namespace, _, reviewer, proposal, accepted_item = setup_proposal(session)
+    rejected_item = ProposalItem(
+        proposal_id=proposal.id,
+        position=1,
+        command_type="CreateClaim",
+        payload_json={
+            "wording": "A rejected companion claim.",
+            "scope_json": {"fixture": "rejected"},
+            "valid_from": datetime(2025, 1, 1, tzinfo=UTC).isoformat(),
+        },
+    )
+    retry_actor = Actor(
+        namespace_id=namespace.id,
+        kind="human",
+        display_name="Partial retry actor",
+        external_id="partial-retry",
+    )
+    session.add_all([rejected_item, retry_actor])
+    session.commit()
+    validate_proposal(session, proposal.id)
+    submit_proposal(session, proposal.id)
+    add_review(session, proposal.id, accepted_item.id, reviewer.id, "accept", "Accepted")
+    add_review(session, proposal.id, rejected_item.id, reviewer.id, "reject", "Rejected")
+    result = apply_proposal(session, proposal.id, reviewer.id)
+    snapshot = (
+        result.applied_at,
+        result.applied_by_actor_id,
+        namespace.revision_token,
+        session.query(Claim).count(),
+        session.query(AuditEvent).count(),
+        tuple(accepted_item.created_canonical_ids_json),
+    )
+
+    retry = apply_proposal(session, proposal.id, retry_actor.id)
+
+    assert retry.status == "partially_accepted"
+    assert (
+        retry.applied_at,
+        retry.applied_by_actor_id,
+        namespace.revision_token,
+        session.query(Claim).count(),
+        session.query(AuditEvent).count(),
+        tuple(accepted_item.created_canonical_ids_json),
+    ) == snapshot
+
+
+def test_rejected_proposal_retry_is_terminal_and_write_free(session) -> None:
+    namespace, _, reviewer, proposal, item = setup_proposal(session)
+    retry_actor = Actor(
+        namespace_id=namespace.id,
+        kind="human",
+        display_name="Rejected retry actor",
+        external_id="rejected-retry",
+    )
+    session.add(retry_actor)
+    session.commit()
+    validate_proposal(session, proposal.id)
+    submit_proposal(session, proposal.id)
+    add_review(session, proposal.id, item.id, reviewer.id, "reject", "Not accepted")
+    result = apply_proposal(session, proposal.id, reviewer.id)
+    snapshot = (
+        result.applied_at,
+        result.applied_by_actor_id,
+        namespace.revision_token,
+        session.query(Claim).count(),
+        session.query(AuditEvent).count(),
+        tuple(item.created_canonical_ids_json),
+    )
+
+    retry = apply_proposal(session, proposal.id, retry_actor.id)
+
+    assert retry.status == "rejected"
+    assert (
+        retry.applied_at,
+        retry.applied_by_actor_id,
+        namespace.revision_token,
+        session.query(Claim).count(),
+        session.query(AuditEvent).count(),
+        tuple(item.created_canonical_ids_json),
+    ) == snapshot
 
 
 def test_proposer_cannot_review_own_item(session) -> None:
@@ -79,11 +183,29 @@ def test_stale_base_rolls_back_canonical_side_effects(session) -> None:
     add_review(session, proposal.id, item.id, reviewer.id, "accept", "Reviewed")
     namespace.revision_token = 2
     session.commit()
-    with pytest.raises(ConflictError):
+    with pytest.raises(ConflictError) as first:
         apply_proposal(session, proposal.id, reviewer.id)
+    assert first.value.code == "proposal.stale_base_revision"
     restored = session.get(Proposal, proposal.id)
     assert restored is not None
     assert restored.status == "stale"
+    snapshot = (
+        restored.applied_at,
+        restored.applied_by_actor_id,
+        namespace.revision_token,
+        session.query(Claim).count(),
+        session.query(AuditEvent).count(),
+    )
+    with pytest.raises(ConflictError) as retry:
+        apply_proposal(session, proposal.id, reviewer.id)
+    assert retry.value.code == "proposal.stale_base_revision"
+    assert (
+        restored.applied_at,
+        restored.applied_by_actor_id,
+        namespace.revision_token,
+        session.query(Claim).count(),
+        session.query(AuditEvent).count(),
+    ) == snapshot
 
 
 def test_failed_accepted_item_rolls_back_all_canonical_writes(session) -> None:
@@ -121,6 +243,11 @@ def test_failed_accepted_item_rolls_back_all_canonical_writes(session) -> None:
     submit_proposal(session, proposal.id)
     add_review(session, proposal.id, first_item.id, reviewer.id, "accept", "Reviewed")
     add_review(session, proposal.id, second_item.id, reviewer.id, "accept", "Reviewed")
+    with pytest.raises(IntegrityError):
+        apply_proposal(session, proposal.id, reviewer.id)
+    assert session.query(SourceArtifact).count() == 0
+    assert session.query(AuditEvent).count() == 0
+    assert session.get(Proposal, proposal.id).status == "in_review"
     with pytest.raises(IntegrityError):
         apply_proposal(session, proposal.id, reviewer.id)
     assert session.query(SourceArtifact).count() == 0

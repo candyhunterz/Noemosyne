@@ -10,7 +10,7 @@
     "e2e": "playwright test"
   },
   "devDependencies": {
-    "@playwright/test": "1.62.1",
+    "@playwright/test": "1.63.0",
     "@types/node": "25.9.5",
     "openapi-typescript": "7.10.1",
     "typescript": "5.9.3"
